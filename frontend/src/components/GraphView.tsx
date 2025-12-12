@@ -11,9 +11,11 @@ export type GraphOut = { nodes: NodeOut[]; edges: EdgeOut[]; related: RelatedOut
 export function GraphView({
   graph,
   onSelect,
+  onCyReady,
 }: {
   graph: GraphOut;
   onSelect: (n: NodeOut) => void;
+  onCyReady?: (cy: Core) => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
@@ -103,9 +105,17 @@ export function GraphView({
           selector: "node:selected",
           style: { "border-width": 3 },
         },
+        {
+          selector: ".hidden",
+          style: {
+            display: "none",
+          },
+        },
       ],
       layout: { name: "breadthfirst", directed: true, padding: 30 },
     });
+
+    onCyReady?.(cy);
 
     cy.on("tap", "node", (evt) => {
       const d = evt.target.data();
