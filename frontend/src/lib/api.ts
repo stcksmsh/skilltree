@@ -7,7 +7,14 @@ export async function apiGet<T>(path: string): Promise<T> {
   return (await r.json()) as T;
 }
 
-export async function apiPost(path: string): Promise<void> {
-  const r = await fetch(`${API_BASE}${path}`, { method: "POST" });
-  if (!r.ok) throw new Error(`${path} failed: ${r.status}`);
+export async function apiPost<T>(path: string, body?: any): Promise<T> {
+  const r = await fetch(API_BASE + path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  if (!r.ok) throw new Error(await r.text());
+  return (await r.json()) as T;
 }

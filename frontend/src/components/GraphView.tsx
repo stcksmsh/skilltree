@@ -16,7 +16,7 @@ export function GraphView({
   highlightPrereqs,
 }: {
   graph: GraphOut;
-  onSelect: (n: NodeOut) => void;
+  onSelect: (n: NodeOut | null) => void;
   onCyReady?: (cy: Core) => void;
   selectedId?: string | null;
   highlightPrereqs?: boolean;
@@ -234,6 +234,18 @@ export function GraphView({
       }
     });
 
+    cy.on("tap", (evt) => {
+      if (evt.target !== cy) return; // only background
+
+      cy.$("node").unselect();
+      onSelectRef.current(null);
+
+      // If highlight mode is on, we still want to restore visuals on deselect
+      restoreAllRef.current?.();
+
+      console.log("[tap] background -> cleared selection");
+    });
+
     return () => cy.destroy();
   }, [elements]); // IMPORTANT: only depends on elements
 
@@ -242,21 +254,25 @@ export function GraphView({
     const cy = cyRef.current;
     if (!cy) return;
 
+    // OFF always restores
     if (!highlightPrereqs) {
       restoreAllRef.current?.();
       console.log("[GraphView] highlightUnder OFF -> restored");
       return;
     }
 
-    // highlightPrereqs is ON
-    if (selectedId) {
+    // ON but no selection should ALSO restore (prevents “stuck faded” state)
+    if (!selectedId) {
       restoreAllRef.current?.();
-      highlightUnderRef.current?.(selectedId);
-      console.log("[GraphView] highlightUnder ON -> re-applied", { selectedId });
-    } else {
-      console.log("[GraphView] highlightUnder ON (no selection yet)");
+      console.log("[GraphView] highlightUnder ON but no selection -> restored");
+      return;
     }
-  }, [highlightPrereqs, selectedId]);
 
+    // ON + selected -> apply highlight
+    restoreAllRef.current?.();
+    highlightUnderRef.current?.(selectedId);
+    console.log("[GraphView] highlightUnder ON -> re-applied", { selectedId });
+  }, [highlightPrereqs, selectedId]);
+  
   return <div ref={containerRef} style={{ height: "100%", width: "100%" }} />;
 }

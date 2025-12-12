@@ -43,6 +43,35 @@ export default function Page() {
   const [showRelated, setShowRelated] = useState(true);
   const [highlightPrereqs, setHighlightPrereqs] = useState(false);
 
+  const [creating, setCreating] = useState(false);
+  const [newSlug, setNewSlug] = useState("");
+  const [newTitle, setNewTitle] = useState("");
+  const [newSummary, setNewSummary] = useState("");
+
+  async function createNode() {
+    setError(null);
+
+    try {
+      const created = await apiPost<NodeOut>("/api/nodes", {
+        slug: newSlug,
+        title: newTitle,
+        summary: newSummary || null,
+      });
+
+      // refresh graph and select created node
+      await load();
+      setSelected(created);
+
+      // reset form
+      setCreating(false);
+      setNewSlug("");
+      setNewTitle("");
+      setNewSummary("");
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    }
+  }
+
   async function load() {
     setError(null);
     try {
@@ -180,27 +209,35 @@ export default function Page() {
               const cy = cyRef.current;
               if (!cy) return;
 
-              const sel = cy.$("node:selected");
-              const target = sel.nonempty()
-                ? sel
-                : selected
-                ? cy.getElementById(selected.id)
-                : cy.collection();
+              const ANIM = {
+                duration: 500,
+                easing: "ease-in-out" as const,
+              };
 
-              if (target.empty()) return;
-
-              cy.animate(
-                {
-                  center: { eles: target },
-                  zoom: Math.max(cy.zoom(), VIEW_ANIM.center.minZoom),
-                },
-                {
-                  duration: VIEW_ANIM.center.duration,
-                  easing: VIEW_ANIM.easing,
+              if (selected) {
+                // center on selected node
+                const el = cy.getElementById(selected.id);
+                if (!el.empty()) {
+                  cy.animate(
+                    {
+                      center: { eles: el },
+                    },
+                    ANIM
+                  );
                 }
-              );
+              } else {
+                // no selection → fit + center everything visible
+                const visible = cy.elements(":visible");
+                if (visible.nonempty()) {
+                  cy.animate(
+                    {
+                      fit: { eles: visible, padding: 30 },
+                    },
+                    ANIM
+                  );
+                }
+              }
             }}
-            disabled={!selected}
           >
             Center
           </button>
@@ -212,6 +249,7 @@ export default function Page() {
             graph={graph}
             onSelect={(n) => {
               setSelected(n);
+              if (!n) setCreating(false);
               const cy = cyRef.current;
               if (cy) {
                 const el = cy.getElementById(n.id);
@@ -280,6 +318,54 @@ export default function Page() {
             />
             related
           </label>
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+            <div style={{ fontSize: 12, opacity: 0.8 }}>Nodes</div>
+            <button
+              onClick={() => {
+                setCreating((v) => !v);
+                setError(null);
+              }}
+            >
+              {creating ? "Cancel" : "New"}
+            </button>
+          </div>
+
+          {creating && (
+            <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+              <input
+                placeholder="title"
+                value={newTitle}
+                onChange={(e) => setNewTitle(e.target.value)}
+                style={{ width: "100%" }}
+              />
+              <input
+                placeholder="slug (unique)"
+                value={newSlug}
+                onChange={(e) => setNewSlug(e.target.value)}
+                style={{ width: "100%" }}
+              />
+              <textarea
+                placeholder="summary (optional)"
+                value={newSummary}
+                onChange={(e) => setNewSummary(e.target.value)}
+                rows={3}
+                style={{ width: "100%", resize: "vertical" }}
+              />
+              <button
+                onClick={createNode}
+                disabled={!newTitle.trim() || !newSlug.trim()}
+              >
+                Create
+              </button>
+
+              <div style={{ fontSize: 11, opacity: 0.7 }}>
+                Tip: keep slug lowercase with dashes (e.g. linear-algebra-basics)
+              </div>
+            </div>
+          )}
         </div>
 
         <div style={{ marginTop: 12 }}>
