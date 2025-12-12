@@ -29,6 +29,13 @@ export default function Page() {
       </div>
 
       <aside style={{ borderLeft: "1px solid #333", padding: 16, fontFamily: "sans-serif" }}>
+        <div style={{ marginTop: 12, fontSize: 12, opacity: 0.85, lineHeight: 1.5 }}>
+          <div><strong>Legend</strong></div>
+          <div>→ solid arrow: requires</div>
+          <div>→ dashed arrow: recommended (rank label)</div>
+          <div>→ dotted line: related</div>
+        </div>
+        
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
           <h2 style={{ margin: 0 }}>Library of Alexandria</h2>
           <button
