@@ -4,16 +4,44 @@ import React, { useEffect, useRef, useState } from "react";
 import { apiGet, apiPost, API_BASE } from "@/lib/api";
 import { GraphOut, NodeOut, GraphView } from "@/components/GraphView";
 
+// ===== Viewport animation tuning =====
+const VIEW_ANIM = {
+  easing: "ease-in-out" as const,
+
+  fit: {
+    duration: 400,
+    padding: 30,
+  },
+
+  center: {
+    duration: 500,
+    minZoom: 1.0,
+  },
+
+  zoom: {
+    duration: 250,
+    factor: 1.15,
+  },
+
+  layout: {
+    duration: 450,
+    fitDuration: 350,
+    padding: 30,
+  },
+};
+
+
 export default function Page() {
   const [graph, setGraph] = useState<GraphOut | null>(null);
   const [selected, setSelected] = useState<NodeOut | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-    const cyRef = useRef<import("cytoscape").Core | null>(null);
+  const cyRef = useRef<import("cytoscape").Core | null>(null);
 
-    const [showRequires, setShowRequires] = useState(true);
-    const [showRecommended, setShowRecommended] = useState(true);
-    const [showRelated, setShowRelated] = useState(true);
+  const [showRequires, setShowRequires] = useState(true);
+  const [showRecommended, setShowRecommended] = useState(true);
+  const [showRelated, setShowRelated] = useState(true);
+  const [highlightPrereqs, setHighlightPrereqs] = useState(false);
 
   async function load() {
     setError(null);
@@ -68,16 +96,34 @@ export default function Page() {
             fontSize: 12,
           }}
         >
-          <button onClick={() => cyRef.current?.fit(undefined, 30)}>Fit</button>
+          <button
+            onClick={() => {
+              const cy = cyRef.current;
+              if (!cy) return;
+
+              const visible = cy.elements(":visible");
+              cy.animate(
+                { fit: { eles: visible, padding: VIEW_ANIM.fit.padding } },
+                { duration: VIEW_ANIM.fit.duration, easing: VIEW_ANIM.easing }
+              );
+            }}
+          >
+            Fit
+          </button>
 
           <button
             onClick={() => {
               const cy = cyRef.current;
               if (!cy) return;
-              cy.zoom({
-                level: cy.zoom() * 1.15,
-                renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 },
-              });
+
+              const next = cy.zoom() * VIEW_ANIM.zoom.factor;
+              cy.animate(
+                {
+                  zoom: next,
+                  renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 },
+                },
+                { duration: VIEW_ANIM.zoom.duration, easing: VIEW_ANIM.easing }
+              );
             }}
           >
             +
@@ -87,10 +133,15 @@ export default function Page() {
             onClick={() => {
               const cy = cyRef.current;
               if (!cy) return;
-              cy.zoom({
-                level: cy.zoom() / 1.15,
-                renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 },
-              });
+
+              const next = cy.zoom() / VIEW_ANIM.zoom.factor;
+              cy.animate(
+                {
+                  zoom: next,
+                  renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 },
+                },
+                { duration: VIEW_ANIM.zoom.duration, easing: VIEW_ANIM.easing }
+              );
             }}
           >
             -
@@ -100,7 +151,25 @@ export default function Page() {
             onClick={() => {
               const cy = cyRef.current;
               if (!cy) return;
-              cy.layout({ name: "breadthfirst", directed: true, padding: 30 }).run();
+
+              const layout = cy.layout({
+                name: "breadthfirst",
+                directed: true,
+                padding: VIEW_ANIM.layout.padding,
+                animate: true,
+                animationDuration: VIEW_ANIM.layout.duration,
+                animationEasing: VIEW_ANIM.easing,
+              });
+
+              layout.run();
+
+              layout.once("layoutstop", () => {
+                const visible = cy.elements(":visible");
+                cy.animate(
+                  { fit: { eles: visible, padding: VIEW_ANIM.fit.padding } },
+                  { duration: VIEW_ANIM.layout.fitDuration, easing: VIEW_ANIM.easing }
+                );
+              });
             }}
           >
             Re-layout
@@ -109,20 +178,33 @@ export default function Page() {
           <button
             onClick={() => {
               const cy = cyRef.current;
-              if (!cy || !selected) return;
-              const n = cy.getElementById(selected.id);
-              if (!n.empty()) {
-                cy.center(n);
-                cy.zoom({
-                  level: Math.max(cy.zoom(), 1.1),
-                  renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 },
-                });
-              }
+              if (!cy) return;
+
+              const sel = cy.$("node:selected");
+              const target = sel.nonempty()
+                ? sel
+                : selected
+                ? cy.getElementById(selected.id)
+                : cy.collection();
+
+              if (target.empty()) return;
+
+              cy.animate(
+                {
+                  center: { eles: target },
+                  zoom: Math.max(cy.zoom(), VIEW_ANIM.center.minZoom),
+                },
+                {
+                  duration: VIEW_ANIM.center.duration,
+                  easing: VIEW_ANIM.easing,
+                }
+              );
             }}
             disabled={!selected}
           >
             Center
           </button>
+
         </div>
 
         {graph ? (
@@ -133,12 +215,27 @@ export default function Page() {
               const cy = cyRef.current;
               if (cy) {
                 const el = cy.getElementById(n.id);
-                if (!el.empty()) cy.center(el);
+                if (!el.empty()) {
+                  // Smooth pan to node (and optionally a small zoom-in if you're far out)
+                  const targetZoom = Math.max(cy.zoom(), 1.0); // tweak: 1.0–1.3
+                  cy.animate(
+                    {
+                      center: { eles: el },
+                      zoom: targetZoom,
+                    },
+                    {
+                      duration: 600,          // tweak: 250–500
+                      easing: "ease-in-out",
+                    }
+                  );
+                }
               }
             }}
             onCyReady={(cy) => {
               cyRef.current = cy;
             }}
+            selectedId={selected?.id ?? null}
+            highlightPrereqs={highlightPrereqs}
           />
         ) : (
           <div style={{ padding: 16 }}>Loading…</div>
@@ -185,6 +282,29 @@ export default function Page() {
           </label>
         </div>
 
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>Selection</div>
+
+          <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
+            <input
+              type="checkbox"
+              checked={highlightPrereqs}
+              onChange={(e) => setHighlightPrereqs(e.target.checked)}
+            />
+            highlight prerequisites (requires)
+          </label>
+
+          <button
+            style={{ marginTop: 8 }}
+            onClick={() => {
+              setSelected(null);
+              setHighlightPrereqs(false);
+            }}
+            disabled={!selected && !highlightPrereqs}
+          >
+            Clear selection
+          </button>
+        </div>
         
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
           <h2 style={{ margin: 0 }}>Library of Alexandria</h2>
