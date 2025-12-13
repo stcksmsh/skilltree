@@ -1,42 +1,23 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { apiGet, apiPost, API_BASE } from "@/lib/api";
-import { GraphOut, NodeOut, GraphView } from "@/components/GraphView";
+import type { Core } from "cytoscape";
 
-// ===== Viewport animation tuning =====
-const VIEW_ANIM = {
-  easing: "ease-in-out" as const,
+import { apiGet, apiPost } from "@/lib/api";
+import { GraphOut, NodeOut, GraphView } from "@/components/graphView/index";
 
-  fit: {
-    duration: 400,
-    padding: 30,
-  },
+import { VIEW_ANIM } from "@/components/graph/constants";
+import { GraphToolbar } from "@/components/graph/GraphToolbar";
+import { Sidebar } from "@/components/graph/GraphSidebar";
 
-  center: {
-    duration: 500,
-    minZoom: 1.0,
-  },
-
-  zoom: {
-    duration: 250,
-    factor: 1.15,
-  },
-
-  layout: {
-    duration: 450,
-    fitDuration: 350,
-    padding: 30,
-  },
-};
-
+import { layoutStyles } from "@/components/graph/styles";
 
 export default function Page() {
   const [graph, setGraph] = useState<GraphOut | null>(null);
   const [selected, setSelected] = useState<NodeOut | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const cyRef = useRef<import("cytoscape").Core | null>(null);
+  const cyRef = useRef<Core | null>(null);
 
   const [showRequires, setShowRequires] = useState(true);
   const [showRecommended, setShowRecommended] = useState(true);
@@ -48,30 +29,6 @@ export default function Page() {
   const [newTitle, setNewTitle] = useState("");
   const [newSummary, setNewSummary] = useState("");
 
-  async function createNode() {
-    setError(null);
-
-    try {
-      const created = await apiPost<NodeOut>("/api/nodes", {
-        slug: newSlug,
-        title: newTitle,
-        summary: newSummary || null,
-      });
-
-      // refresh graph and select created node
-      await load();
-      setSelected(created);
-
-      // reset form
-      setCreating(false);
-      setNewSlug("");
-      setNewTitle("");
-      setNewSummary("");
-    } catch (e: any) {
-      setError(e?.message ?? String(e));
-    }
-  }
-
   async function load() {
     setError(null);
     try {
@@ -81,10 +38,32 @@ export default function Page() {
     }
   }
 
+  async function createNode() {
+    setError(null);
+    try {
+      const created = await apiPost<NodeOut>("/api/nodes", {
+        slug: newSlug,
+        title: newTitle,
+        summary: newSummary || null,
+      });
+
+      await load();
+      setSelected(created);
+
+      setCreating(false);
+      setNewSlug("");
+      setNewTitle("");
+      setNewSummary("");
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    }
+  }
+
   useEffect(() => {
     load();
   }, []);
 
+  // toggle edges visibility
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
@@ -99,172 +78,33 @@ export default function Page() {
     setHidden("edge.recommended", !showRecommended);
     setHidden("edge.related", !showRelated);
 
-    // optional: re-fit after toggles to keep view nice
     cy.fit(undefined, 30);
   }, [showRequires, showRecommended, showRelated]);
 
-
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", height: "100vh" }}>
-      <div style={{ minWidth: 0, position: "relative" }}>
-        {/* Toolbar overlay */}
-        <div
-          style={{
-            position: "absolute",
-            top: 12,
-            left: 12,
-            zIndex: 10,
-            display: "flex",
-            gap: 8,
-            padding: 8,
-            border: "1px solid #333",
-            borderRadius: 8,
-            background: "rgba(0,0,0,0.6)",
-            backdropFilter: "blur(6px)",
-            fontFamily: "sans-serif",
-            fontSize: 12,
-          }}
-        >
-          <button
-            onClick={() => {
-              const cy = cyRef.current;
-              if (!cy) return;
-
-              const visible = cy.elements(":visible");
-              cy.animate(
-                { fit: { eles: visible, padding: VIEW_ANIM.fit.padding } },
-                { duration: VIEW_ANIM.fit.duration, easing: VIEW_ANIM.easing }
-              );
-            }}
-          >
-            Fit
-          </button>
-
-          <button
-            onClick={() => {
-              const cy = cyRef.current;
-              if (!cy) return;
-
-              const next = cy.zoom() * VIEW_ANIM.zoom.factor;
-              cy.animate(
-                {
-                  zoom: next,
-                  renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 },
-                },
-                { duration: VIEW_ANIM.zoom.duration, easing: VIEW_ANIM.easing }
-              );
-            }}
-          >
-            +
-          </button>
-
-          <button
-            onClick={() => {
-              const cy = cyRef.current;
-              if (!cy) return;
-
-              const next = cy.zoom() / VIEW_ANIM.zoom.factor;
-              cy.animate(
-                {
-                  zoom: next,
-                  renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 },
-                },
-                { duration: VIEW_ANIM.zoom.duration, easing: VIEW_ANIM.easing }
-              );
-            }}
-          >
-            -
-          </button>
-
-          <button
-            onClick={() => {
-              const cy = cyRef.current;
-              if (!cy) return;
-
-              const layout = cy.layout({
-                name: "breadthfirst",
-                directed: true,
-                padding: VIEW_ANIM.layout.padding,
-                animate: true,
-                animationDuration: VIEW_ANIM.layout.duration,
-                animationEasing: VIEW_ANIM.easing,
-              });
-
-              layout.run();
-
-              layout.once("layoutstop", () => {
-                const visible = cy.elements(":visible");
-                cy.animate(
-                  { fit: { eles: visible, padding: VIEW_ANIM.fit.padding } },
-                  { duration: VIEW_ANIM.layout.fitDuration, easing: VIEW_ANIM.easing }
-                );
-              });
-            }}
-          >
-            Re-layout
-          </button>
-
-          <button
-            onClick={() => {
-              const cy = cyRef.current;
-              if (!cy) return;
-
-              const ANIM = {
-                duration: 500,
-                easing: "ease-in-out" as const,
-              };
-
-              if (selected) {
-                // center on selected node
-                const el = cy.getElementById(selected.id);
-                if (!el.empty()) {
-                  cy.animate(
-                    {
-                      center: { eles: el },
-                    },
-                    ANIM
-                  );
-                }
-              } else {
-                // no selection → fit + center everything visible
-                const visible = cy.elements(":visible");
-                if (visible.nonempty()) {
-                  cy.animate(
-                    {
-                      fit: { eles: visible, padding: 30 },
-                    },
-                    ANIM
-                  );
-                }
-              }
-            }}
-          >
-            Center
-          </button>
-
-        </div>
+    <div style={layoutStyles.page}>
+      <div style={layoutStyles.graphPane}>
+        <GraphToolbar cyRef={cyRef} selectedId={selected?.id ?? null} />
 
         {graph ? (
           <GraphView
             graph={graph}
             onSelect={(n) => {
               setSelected(n);
-              if (!n) setCreating(false);
+
+              if (!n) {
+                setCreating(false);
+                return;
+              }
+
               const cy = cyRef.current;
               if (cy) {
                 const el = cy.getElementById(n.id);
                 if (!el.empty()) {
-                  // Smooth pan to node (and optionally a small zoom-in if you're far out)
-                  const targetZoom = Math.max(cy.zoom(), 1.0); // tweak: 1.0–1.3
+                  const targetZoom = Math.max(cy.zoom(), VIEW_ANIM.center.minZoom);
                   cy.animate(
-                    {
-                      center: { eles: el },
-                      zoom: targetZoom,
-                    },
-                    {
-                      duration: 600,          // tweak: 250–500
-                      easing: "ease-in-out",
-                    }
+                    { center: { eles: el }, zoom: targetZoom },
+                    { duration: 600, easing: VIEW_ANIM.easing }
                   );
                 }
               }
@@ -280,156 +120,44 @@ export default function Page() {
         )}
       </div>
 
-
-      <aside style={{ borderLeft: "1px solid #333", padding: 16, fontFamily: "sans-serif" }}>
-        <div style={{ marginTop: 12, fontSize: 12, opacity: 0.85, lineHeight: 1.5 }}>
-          <div><strong>Legend</strong></div>
-          <div>→ solid arrow: requires</div>
-          <div>→ dashed arrow: recommended (rank label)</div>
-          <div>→ dotted line: related</div>
-        </div>
-
-        <div style={{ marginTop: 12 }}>
-          <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>Edges</div>
-
-          <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
-            <input
-              type="checkbox"
-              checked={showRequires}
-              onChange={(e) => setShowRequires(e.target.checked)}
-            />
-            requires
-          </label>
-
-          <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
-            <input
-              type="checkbox"
-              checked={showRecommended}
-              onChange={(e) => setShowRecommended(e.target.checked)}
-            />
-            recommended
-          </label>
-
-          <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
-            <input
-              type="checkbox"
-              checked={showRelated}
-              onChange={(e) => setShowRelated(e.target.checked)}
-            />
-            related
-          </label>
-        </div>
-
-        <div style={{ marginTop: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-            <div style={{ fontSize: 12, opacity: 0.8 }}>Nodes</div>
-            <button
-              onClick={() => {
-                setCreating((v) => !v);
-                setError(null);
-              }}
-            >
-              {creating ? "Cancel" : "New"}
-            </button>
-          </div>
-
-          {creating && (
-            <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
-              <input
-                placeholder="title"
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                style={{ width: "100%" }}
-              />
-              <input
-                placeholder="slug (unique)"
-                value={newSlug}
-                onChange={(e) => setNewSlug(e.target.value)}
-                style={{ width: "100%" }}
-              />
-              <textarea
-                placeholder="summary (optional)"
-                value={newSummary}
-                onChange={(e) => setNewSummary(e.target.value)}
-                rows={3}
-                style={{ width: "100%", resize: "vertical" }}
-              />
-              <button
-                onClick={createNode}
-                disabled={!newTitle.trim() || !newSlug.trim()}
-              >
-                Create
-              </button>
-
-              <div style={{ fontSize: 11, opacity: 0.7 }}>
-                Tip: keep slug lowercase with dashes (e.g. linear-algebra-basics)
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div style={{ marginTop: 12 }}>
-          <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>Selection</div>
-
-          <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
-            <input
-              type="checkbox"
-              checked={highlightPrereqs}
-              onChange={(e) => setHighlightPrereqs(e.target.checked)}
-            />
-            highlight prerequisites (requires)
-          </label>
-
-          <button
-            style={{ marginTop: 8 }}
-            onClick={() => {
-              setSelected(null);
-              setHighlightPrereqs(false);
-            }}
-            disabled={!selected && !highlightPrereqs}
-          >
-            Clear selection
-          </button>
-        </div>
-        
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-          <h2 style={{ margin: 0 }}>Library of Alexandria</h2>
-          <button
-            onClick={async () => {
-              setError(null);
-              try {
-                await apiPost("/api/admin/seed");
-                await load();
-                setSelected(null);
-              } catch (e: any) {
-                setError(e?.message ?? String(e));
-              }
-            }}
-          >
-            Reseed
-          </button>
-        </div>
-
-        <div style={{ opacity: 0.7, marginTop: 6, fontSize: 12 }}>API: {API_BASE}</div>
-
-        {error && (
-          <pre style={{ whiteSpace: "pre-wrap", marginTop: 12, color: "tomato" }}>
-            {error}
-          </pre>
-        )}
-
-        <hr style={{ margin: "16px 0", opacity: 0.2 }} />
-
-        {selected ? (
-          <>
-            <h3 style={{ margin: "0 0 6px 0" }}>{selected.title}</h3>
-            <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 10 }}>{selected.slug}</div>
-            <div style={{ lineHeight: 1.4 }}>{selected.summary || "—"}</div>
-          </>
-        ) : (
-          <div style={{ opacity: 0.8 }}>Click a node.</div>
-        )}
-      </aside>
+      <Sidebar
+        error={error}
+        onReseed={async () => {
+          setError(null);
+          try {
+            await apiPost("/api/admin/seed");
+            await load();
+            setSelected(null);
+          } catch (e: any) {
+            setError(e?.message ?? String(e));
+          }
+        }}
+        showRequires={showRequires}
+        showRecommended={showRecommended}
+        showRelated={showRelated}
+        onChangeRequires={setShowRequires}
+        onChangeRecommended={setShowRecommended}
+        onChangeRelated={setShowRelated}
+        creating={creating}
+        newTitle={newTitle}
+        newSlug={newSlug}
+        newSummary={newSummary}
+        onToggleNew={() => {
+          setCreating((v) => !v);
+          setError(null);
+        }}
+        onChangeNewTitle={setNewTitle}
+        onChangeNewSlug={setNewSlug}
+        onChangeNewSummary={setNewSummary}
+        onCreateNode={createNode}
+        highlightPrereqs={highlightPrereqs}
+        onToggleHighlightPrereqs={setHighlightPrereqs}
+        onClearSelection={() => {
+          setSelected(null);
+          setHighlightPrereqs(false);
+        }}
+        selected={selected}
+      />
     </div>
   );
 }
