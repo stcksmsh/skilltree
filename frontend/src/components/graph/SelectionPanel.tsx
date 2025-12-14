@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import type { NodeOut } from "@/components/graphView/GraphView";
+import type { NodeOut } from "@/components/graphView/types";
 import { panelStyles } from "./styles";
 
 export function SelectionPanel({

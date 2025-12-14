@@ -1,5 +1,5 @@
 import type cytoscape from "cytoscape";
-import type { NodeOut } from "../types";
+import type { NodeOut } from "@/components/graphView/types";
 
 export function installGraphEvents(opts: {
   cy: cytoscape.Core;

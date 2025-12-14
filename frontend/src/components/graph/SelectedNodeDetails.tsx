@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import type { NodeOut } from "@/components/graphView/GraphView";
+import type { NodeOut } from "@/components/graphView/types";
 import { selectionStyles } from "./styles";
 
 export function SelectedNodeDetails({ selected }: { selected: NodeOut | null }) {

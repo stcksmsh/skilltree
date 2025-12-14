@@ -1,0 +1,54 @@
+# frontend/Dockerfile
+
+# 1) deps
+FROM node:20-slim AS deps
+WORKDIR /app
+
+# Needed by some deps on alpine (safe default)
+RUN apk add --no-cache libc6-compat
+
+# Copy lockfiles first for caching
+COPY package.json ./
+COPY package-lock.json* yarn.lock* pnpm-lock.yaml* ./
+
+RUN set -eux; \
+  if [ -f package-lock.json ]; then npm ci; \
+  elif [ -f yarn.lock ]; then yarn install --frozen-lockfile; \
+  elif [ -f pnpm-lock.yaml ]; then corepack enable && pnpm install --frozen-lockfile; \
+  else npm install; \
+  fi
+
+# 2) build
+FROM node:20-slim AS builder
+WORKDIR /app
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+# Build Next.js
+RUN set -eux; \
+  if [ -f package-lock.json ]; then npm run build; \
+  elif [ -f yarn.lock ]; then yarn build; \
+  elif [ -f pnpm-lock.yaml ]; then corepack enable && pnpm build; \
+  else npm run build; \
+  fi
+
+# 3) runtime
+FROM node:20-slim AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+
+# If you use Next image optimization, you may want this:
+RUN apk add --no-cache libc6-compat
+
+# Copy only what we need
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/next.config.* ./
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/node_modules ./node_modules
+
+EXPOSE 3000
+
+# Next default start
+CMD ["node", "node_modules/next/dist/bin/next", "start", "-H", "0.0.0.0", "-p", "3000"]

@@ -30,12 +30,14 @@ async def seed_minimal(session: AsyncSession) -> None:
 
     by_slug = {x.slug: x for x in nodes}
 
+    # requires_pairs are (prereq_slug, topic_slug) and are stored as prereq -> topic
     requires_pairs = [
         ("logic", "proofs"),
         ("sets", "discrete"),
         ("proofs", "discrete"),
-        ("calc", "lin-alg"),  # arbitrary example
+        ("lin-alg", "calc"),
     ]
+
 
     # insert requires with cycle check
     existing: list[tuple] = []

@@ -1,16 +1,16 @@
-import type { Stylesheet } from "cytoscape";
+import type { StylesheetStyle } from "cytoscape";
 
-export const CY_STYLE: Stylesheet[] = [
+export const CY_STYLE: StylesheetStyle[] = [
   {
     selector: "node",
     style: {
       label: "data(title)",
       "text-wrap": "wrap",
-      "text-max-width": 150,
+      "text-max-width": "150px",
       "font-size": 10,
       "border-width": 1,
       "transition-property": "opacity, text-opacity, background-opacity, border-opacity, border-width",
-      "transition-duration": "200ms",
+      "transition-duration": 0.2,
       "transition-timing-function": "ease-in-out",
     },
   },
@@ -18,7 +18,7 @@ export const CY_STYLE: Stylesheet[] = [
     selector: "edge",
     style: {
       "transition-property": "opacity, width",
-      "transition-duration": "200ms",
+      "transition-duration": 0.2,
       "transition-timing-function": "ease-in-out",
     },
   },

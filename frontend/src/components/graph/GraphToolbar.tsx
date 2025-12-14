@@ -38,7 +38,7 @@ export function GraphToolbar({
 
           const next = cy.zoom() * VIEW_ANIM.zoom.factor;
           cy.animate(
-            { zoom: next, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } },
+            { zoom: next, pan: { x: cy.width() / 2, y: cy.height() / 2 } },
             { duration: VIEW_ANIM.zoom.duration, easing: VIEW_ANIM.easing }
           );
         }}
@@ -53,7 +53,7 @@ export function GraphToolbar({
 
           const next = cy.zoom() / VIEW_ANIM.zoom.factor;
           cy.animate(
-            { zoom: next, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } },
+            { zoom: next, pan: { x: cy.width() / 2, y: cy.height() / 2 } },
             { duration: VIEW_ANIM.zoom.duration, easing: VIEW_ANIM.easing }
           );
         }}
@@ -73,11 +73,14 @@ export function GraphToolbar({
             animate: true,
             animationDuration: VIEW_ANIM.layout.duration,
             animationEasing: VIEW_ANIM.easing,
+            spacingFactor: 1.5,
+            nodeDimensionsIncludeLabels: true,
+            grid: true,
           });
 
           layout.run();
 
-          layout.once("layoutstop", () => {
+          layout.one("layoutstop", () => {
             const visible = cy.elements(":visible");
             cy.animate(
               { fit: { eles: visible, padding: VIEW_ANIM.fit.padding } },

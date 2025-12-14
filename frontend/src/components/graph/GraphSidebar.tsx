@@ -2,7 +2,7 @@
 
 import React from "react";
 import { API_BASE } from "@/lib/api";
-import type { NodeOut } from "@/components/graphView/GraphView";
+import type { NodeOut } from "@/components/graphView/types";
 
 import { Legend } from "./Legend";
 import { EdgesPanel } from "./EdgesPanel";

@@ -9,29 +9,33 @@ services:
       - pgdata:/var/lib/postgresql/data
     ports:
       - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U skilltree -d skilltree"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
 
   backend:
     build:
       context: ./backend
+      dockerfile: dockerfile.dev
     environment:
       DATABASE_URL: postgresql+asyncpg://skilltree:skilltree@db:5432/skilltree
       CORS_ORIGINS: http://localhost:3000
+    volumes:
+      - ./backend:/app
     depends_on:
-      db:
-        condition: service_healthy
+      - db
     ports:
       - "8000:8000"
 
   frontend:
     build:
       context: ./frontend
+      dockerfile: dockerfile.dev
     environment:
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
     depends_on:
       - backend
     ports:

@@ -5,21 +5,27 @@ export const HIGHLIGHT_ANIM = {
   easing: "ease-in-out" as const,
 };
 
-export function anim(col: cytoscape.CollectionReturnValue, style: any) {
-  (col as any).stop(true, false).animate({ style }, HIGHLIGHT_ANIM);
+type Animatable = {
+  stop: (clearQueue?: boolean, jumpToEnd?: boolean) => any;
+  animate: (props: any, params?: any) => any;
+};
+
+export function anim(col: Animatable, style: any) {
+  col.stop(true, false).animate({ style }, HIGHLIGHT_ANIM);
 }
 
 export function makeRestoreAll(cy: cytoscape.Core) {
   return () => {
     cy.batch(() => {
-      anim(cy.nodes(), {
+      anim(cy.nodes() as unknown as Animatable, {
         opacity: 1,
         "text-opacity": 1,
         "background-opacity": 1,
         "border-opacity": 1,
         "border-width": 1,
       });
-      anim(cy.edges(), { opacity: 1, width: 2 });
+
+      anim(cy.edges() as unknown as Animatable, { opacity: 1, width: 2 });
     });
   };
 }
