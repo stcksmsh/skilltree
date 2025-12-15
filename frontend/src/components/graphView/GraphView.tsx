@@ -2,12 +2,15 @@
 
 import React, { useEffect, useMemo, useRef } from "react";
 import cytoscape, { Core } from "cytoscape";
+import dagre from "cytoscape-dagre";
 
 import type { GraphOut, NodeOut } from "./types";
-import { CY_LAYOUT, CY_STYLE } from "./cy/style";
+import { CY_LAYOUT, CY_STYLE, runRelayout } from "./cy/style";
 import { makeRestoreAll } from "./cy/anim";
 import { highlightRequiresChain } from "./cy/highlight";
 import { installGraphEvents } from "./cy/events";
+
+cytoscape.use(dagre);
 
 export function GraphView({
   graph,
@@ -47,7 +50,7 @@ export function GraphView({
 
   const elements = useMemo(() => {
     const ns = graph.nodes.map((n) => ({
-      data: { id: n.id, slug: n.slug, title: n.title, summary: n.summary ?? "" },
+      data: { id: n.id, slug: n.slug, title: n.title, short_title: n.short_title, summary: n.summary ?? "" },
     }));
 
     const es = graph.edges.map((e) => ({
@@ -75,8 +78,10 @@ export function GraphView({
       container: containerRef.current,
       elements,
       style: CY_STYLE,
-      layout: CY_LAYOUT,
+      layout: { name: "preset" },
     });
+
+    runRelayout(cy);
 
     cyRef.current = cy;
     onCyReadyRef.current?.(cy);

@@ -20,6 +20,7 @@ export const VIEW_ANIM = {
   layout: {
     duration: 450,
     fitDuration: 350,
-    padding: 30,
+    padding: 80,
+    spacing_factor: 2.6,
   },
-};
+} as const;

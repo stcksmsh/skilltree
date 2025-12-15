@@ -9,6 +9,7 @@ class NodeOut(BaseModel):
     id: UUID
     slug: str
     title: str
+    short_title: str
     summary: str | None = None
 
 
@@ -33,6 +34,7 @@ class GraphOut(BaseModel):
 class NodeCreateIn(BaseModel):
     slug: str = Field(min_length=1, max_length=120)
     title: str = Field(min_length=1, max_length=200)
+    short_title: str = Field(min_length=1, max_length=30)
     summary: Optional[str] = Field(default=None, max_length=500)
 
 class NodeCreateOut(BaseModel):

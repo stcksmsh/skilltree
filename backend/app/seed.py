@@ -14,17 +14,18 @@ async def seed_minimal(session: AsyncSession) -> None:
     await session.execute(delete(Node))
     await session.commit()
 
-    def n(slug: str, title: str, summary: str = "") -> Node:
-        return Node(slug=slug, title=title, summary=summary or None)
+    def n(slug: str, title: str, short_title: str, summary: str = "") -> Node:
+        return Node(slug=slug, title=title, short_title=short_title, summary=summary or None)
 
     nodes = [
-        n("logic", "Logic", "Propositional + predicate logic basics."),
-        n("sets", "Set Theory", "Sets, functions, relations."),
-        n("proofs", "Proof Techniques", "Induction, contradiction, construction."),
-        n("discrete", "Discrete Mathematics", "Core discrete structures."),
-        n("lin-alg", "Linear Algebra", "Vector spaces, matrices."),
-        n("calc", "Calculus", "Limits, derivatives, integrals."),
+        n("logic", "Logic", "Logic", "Propositional + predicate logic basics."),
+        n("sets", "Set Theory", "Sets", "Sets, functions, relations."),
+        n("proofs", "Proof Techniques", "Proofs", "Induction, contradiction, construction."),
+        n("discrete", "Discrete Mathematics", "Discrete", "Core discrete structures."),
+        n("lin-alg", "Linear Algebra", "LinAlg", "Vector spaces, matrices."),
+        n("calc", "Calculus", "Calc", "Limits, derivatives, integrals."),
     ]
+
     session.add_all(nodes)
     await session.flush()  # get IDs
 

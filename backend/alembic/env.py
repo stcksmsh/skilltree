@@ -10,6 +10,12 @@ from app.models import Base
 import os, sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+def get_url() -> str:
+    url = os.environ["DATABASE_URL"]
+    # If app uses asyncpg, swap to psycopg for Alembic
+    return url.replace("postgresql+asyncpg://", "postgresql+psycopg://")
+
+
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
@@ -62,6 +68,9 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
+    config = context.config
+    config.set_main_option("sqlalchemy.url", get_url())
+
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

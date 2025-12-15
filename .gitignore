@@ -1,0 +1,99 @@
+############################
+# General
+############################
+.DS_Store
+Thumbs.db
+*.log
+
+############################
+# Python
+############################
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+.env
+.venv/
+venv/
+ENV/
+env/
+
+# pytest / coverage
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+############################
+# Alembic
+############################
+# DO NOT ignore alembic/versions/*.py
+# Ignore only compiled artifacts
+backend/alembic/**/__pycache__/
+backend/alembic/**/*.pyc
+
+############################
+# Node / Frontend
+############################
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+.next/
+out/
+dist/
+build/
+.cache/
+
+############################
+# TypeScript
+############################
+*.tsbuildinfo
+
+############################
+# Vite / Next / SWC
+############################
+.swc/
+.next/cache/
+
+############################
+# Docker
+############################
+docker-compose.override.yml
+*.pid
+
+############################
+# IDE / Editor
+############################
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+############################
+# OS / Temp
+############################
+.tmp/
+.temp/
+*.tmp
+*.bak
+*.swp
+*.swo
+
+############################
+# Database / Local data
+############################
+*.sqlite
+*.db
+
+############################
+# Misc
+############################
+*.tgz
+*.tar.gz

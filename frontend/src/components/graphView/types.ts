@@ -1,4 +1,4 @@
-export type NodeOut = { id: string; slug: string; title: string; summary?: string | null };
+export type NodeOut = { id: string; slug: string; title: string; short_title: string; summary?: string | null };
 
 export type EdgeOut = {
   id: string;

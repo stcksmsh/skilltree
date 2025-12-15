@@ -45,7 +45,7 @@ async def get_graph(session: AsyncSession = Depends(get_session)):
     related = (await session.execute(select(RelatedEdge))).scalars().all()
 
     return GraphOut(
-        nodes=[NodeOut(id=n.id, slug=n.slug, title=n.title, summary=n.summary) for n in nodes],
+        nodes=[NodeOut(id=n.id, slug=n.slug, title=n.title, short_title=n.short_title, summary=n.summary) for n in nodes],
         edges=[
             EdgeOut(id=e.id, source=e.src_id, target=e.dst_id, type=e.type.value, rank=e.rank)
             for e in edges
@@ -58,12 +58,13 @@ async def get_graph(session: AsyncSession = Depends(get_session)):
 async def create_node(payload: NodeCreateIn, session: AsyncSession = Depends(get_session)):
     slug = payload.slug.strip()
     title = payload.title.strip()
+    short_title = payload.short_title.strip()
     summary = payload.summary.strip() if payload.summary else None
 
-    if not slug or not title:
-        raise HTTPException(status_code=400, detail="slug and title are required")
+    if not slug or not title or not short_title:
+        raise HTTPException(status_code=400, detail="slug, title, and short_title are required")
 
-    n = Node(slug=slug, title=title, summary=summary)
+    n = Node(slug=slug, title=title, short_title=short_title, summary=summary)
     session.add(n)
 
     try:

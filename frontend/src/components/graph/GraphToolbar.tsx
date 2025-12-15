@@ -4,6 +4,7 @@ import React from "react";
 import type { Core } from "cytoscape";
 import { VIEW_ANIM } from "./constants";
 import { toolbarStyles } from "./styles";
+import { runRelayout } from "../graphView/cy/style";
 
 export function GraphToolbar({
   cyRef,
@@ -65,28 +66,7 @@ export function GraphToolbar({
         onClick={() => {
           const cy = cyRef.current;
           if (!cy) return;
-
-          const layout = cy.layout({
-            name: "breadthfirst",
-            directed: true,
-            padding: VIEW_ANIM.layout.padding,
-            animate: true,
-            animationDuration: VIEW_ANIM.layout.duration,
-            animationEasing: VIEW_ANIM.easing,
-            spacingFactor: 1.5,
-            nodeDimensionsIncludeLabels: true,
-            grid: true,
-          });
-
-          layout.run();
-
-          layout.one("layoutstop", () => {
-            const visible = cy.elements(":visible");
-            cy.animate(
-              { fit: { eles: visible, padding: VIEW_ANIM.fit.padding } },
-              { duration: VIEW_ANIM.layout.fitDuration, easing: VIEW_ANIM.easing }
-            );
-          });
+          runRelayout(cy);
         }}
       >
         Re-layout
