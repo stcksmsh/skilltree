@@ -159,3 +159,16 @@ class RelatedEdge(Base):
     b_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("abstract_nodes.id", ondelete="CASCADE"), primary_key=True
     )
+
+class ImplContext(Base):
+    __tablename__ = "impl_contexts"
+
+    impl_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("impl_nodes.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+    context_abstract_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("abstract_nodes.id", ondelete="CASCADE"),
+        primary_key=True,
+    )

@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
     AbstractNode,
+    ImplContext,
     ImplNode,
     Edge,
     RelatedEdge,
@@ -108,12 +109,21 @@ async def seed_minimal(session: AsyncSession) -> None:
     qm_core = impl(qm, "core")
 
     # Fourier variants (no core on purpose, to force UI to show variant picker)
-    ft_math = impl(fourier, "math", "Rigorous definition, spaces, convergence.")
-    ft_signals = impl(fourier, "signals", "DFT/FFT, sampling, aliasing, frequency response usage.")
-    ft_physics = impl(fourier, "physics", "Spectral interpretation, waves/operators, physical intuition.")
+    ft_math = impl(fourier, "math")
+    ft_signals = impl(fourier, "signals")
+    ft_physics = impl(fourier, "physics")
 
     session.add_all(
         [logic_core, la_core, calc_core, ss_core, qm_core, ft_math, ft_signals, ft_physics]
+    )
+    await session.flush()
+
+    session.add_all(
+        [
+            ImplContext(impl_id=ft_math.id, context_abstract_id=math.id),
+            ImplContext(impl_id=ft_signals.id, context_abstract_id=dsp_group.id),
+            ImplContext(impl_id=ft_physics.id, context_abstract_id=physics.id),
+        ]
     )
     await session.flush()
 
