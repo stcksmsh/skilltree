@@ -24,6 +24,20 @@ export const CY_STYLE: StylesheetStyle[] = [
     },
   },
   {
+    selector: "node.kind-group",
+    style: {
+      "shape": "round-rectangle",
+      "border-width": 2,
+      "font-size": 10,
+    },
+  },
+  {
+    selector: "node.has-variants",
+    style: {
+      "border-style": "dashed",
+    },
+  },
+  {
     selector: "edge",
     style: {
       "curve-style": "unbundled-bezier",

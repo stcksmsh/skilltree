@@ -4,13 +4,15 @@ import React, { useEffect, useMemo, useRef } from "react";
 import cytoscape, { Core } from "cytoscape";
 import dagre from "cytoscape-dagre";
 
-import type { GraphOut, NodeOut } from "./types";
-import { CY_LAYOUT, CY_STYLE, runRelayout } from "./cy/style";
+import type { GraphOut, AbstractNodeOut } from "./types";
+import { CY_STYLE, runRelayout } from "./cy/style";
 import { makeRestoreAll } from "./cy/anim";
 import { highlightRequiresChain } from "./cy/highlight";
 import { installGraphEvents } from "./cy/events";
 
 cytoscape.use(dagre);
+
+type BundleKey = `${string}::${string}::${string}`;
 
 export function GraphView({
   graph,
@@ -20,7 +22,7 @@ export function GraphView({
   highlightPrereqs,
 }: {
   graph: GraphOut;
-  onSelect: (n: NodeOut | null) => void;
+  onSelect: (n: AbstractNodeOut | null) => void;
   onCyReady?: (cy: Core) => void;
   selectedId?: string | null;
   highlightPrereqs?: boolean;
@@ -49,17 +51,86 @@ export function GraphView({
   }, [highlightPrereqs]);
 
   const elements = useMemo(() => {
-    const ns = graph.nodes.map((n) => ({
-      data: { id: n.id, slug: n.slug, title: n.title, short_title: n.short_title, summary: n.summary ?? "" },
+    // --- impl_id -> abstract_id mapping
+    const implToAbs = new Map<string, string>();
+    for (const impl of graph.impl_nodes) {
+      implToAbs.set(impl.id, impl.abstract_id);
+    }
+
+    // --- abstract nodes
+    const ns = graph.abstract_nodes.map((n) => ({
+      data: {
+        id: n.id,
+        slug: n.slug,
+        title: n.title,
+        short_title: n.short_title,
+        summary: n.summary ?? "",
+        kind: n.kind,
+        parent_id: n.parent_id ?? "",
+        has_children: n.has_children,
+        has_variants: n.has_variants,
+        default_impl_id: n.default_impl_id ?? "",
+      },
+      // classes for styling (optional, but useful now)
+      classes: [
+        n.kind === "group" ? "kind-group" : "kind-concept",
+        n.has_children ? "has-children" : "",
+        n.has_variants ? "has-variants" : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
     }));
 
-    const es = graph.edges.map((e) => ({
-      data: { id: e.id, source: e.source, target: e.target, type: e.type, rank: e.rank ?? "" },
-      classes: e.type,
-    }));
+    // --- project + bundle impl edges into abstract edges
+    // Bundle by srcAbs, dstAbs, type (keeps DAG view readable)
+    const bundles = new Map<BundleKey, { count: number; rankMin: number | null }>();
 
-    const rs = graph.related.map((r, idx) => ({
-      data: { id: `rel-${idx}`, source: r.a, target: r.b, type: "related" },
+    for (const e of graph.edges) {
+      const srcAbs = implToAbs.get(e.src_impl_id);
+      const dstAbs = implToAbs.get(e.dst_impl_id);
+      if (!srcAbs || !dstAbs) continue;
+
+      // optional: drop self after projection (variant-to-variant within same abstract)
+      if (srcAbs === dstAbs) continue;
+
+      const key: BundleKey = `${srcAbs}::${dstAbs}::${e.type}`;
+      const prev = bundles.get(key);
+
+      const rank = e.rank ?? null;
+      if (!prev) {
+        bundles.set(key, { count: 1, rankMin: rank });
+      } else {
+        prev.count += 1;
+        // keep min rank for recommended (stable-ish)
+        if (rank != null) prev.rankMin = prev.rankMin == null ? rank : Math.min(prev.rankMin, rank);
+      }
+    }
+
+    const es = Array.from(bundles.entries()).map(([key, v]) => {
+      const [source, target, type] = key.split("::");
+      const id = `bundle-${type}-${source}-${target}`;
+      return {
+        data: {
+          id,
+          source,
+          target,
+          type,
+          // optional: show count to debug
+          count: v.count,
+          rank: v.rankMin ?? "",
+        },
+        classes: type,
+      };
+    });
+
+    // --- related edges (abstract<->abstract)
+    const rs = graph.related_edges.map((r, idx) => ({
+      data: {
+        id: `rel-${idx}`,
+        source: r.a_id,
+        target: r.b_id,
+        type: "related",
+      },
       classes: "related",
     }));
 
@@ -86,8 +157,6 @@ export function GraphView({
     cyRef.current = cy;
     onCyReadyRef.current?.(cy);
 
-    console.log("[GraphView] cy ready", { nodes: cy.nodes().size(), edges: cy.edges().size() });
-
     const restoreAll = makeRestoreAll(cy);
     restoreAllRef.current = restoreAll;
 
@@ -110,24 +179,17 @@ export function GraphView({
     const cy = cyRef.current;
     if (!cy) return;
 
-    // OFF always restores
     if (!highlightPrereqs) {
       restoreAllRef.current?.();
-      console.log("[GraphView] highlight OFF -> restored");
       return;
     }
-
-    // ON but no selection should also restore (prevents “stuck faded” state)
     if (!selectedId) {
       restoreAllRef.current?.();
-      console.log("[GraphView] highlight ON but no selection -> restored");
       return;
     }
 
-    // ON + selected -> apply highlight
     restoreAllRef.current?.();
     highlightRef.current?.(selectedId);
-    console.log("[GraphView] highlight ON -> re-applied", { selectedId });
   }, [highlightPrereqs, selectedId]);
 
   return <div ref={containerRef} style={{ height: "100%", width: "100%" }} />;

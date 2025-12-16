@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import type { Core } from "cytoscape";
 
 import { apiGet, apiPost } from "@/lib/api";
-import { GraphOut, NodeOut, GraphView } from "@/components/graphView/index";
+import { GraphOut, AbstractNodeOut, ImplOut, GraphView } from "@/components/graphView/index";
 
 import { VIEW_ANIM } from "@/components/graph/constants";
 import { GraphToolbar } from "@/components/graph/GraphToolbar";
@@ -14,7 +14,7 @@ import { layoutStyles } from "@/components/graph/styles";
 
 export default function Page() {
   const [graph, setGraph] = useState<GraphOut | null>(null);
-  const [selected, setSelected] = useState<NodeOut | null>(null);
+  const [selected, setSelected] = useState<AbstractNodeOut | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const cyRef = useRef<Core | null>(null);
@@ -41,7 +41,7 @@ export default function Page() {
   async function createNode() {
     setError(null);
     try {
-      const created = await apiPost<NodeOut>("/api/nodes", {
+      const created = await apiPost<AbstractNodeOut>("/api/nodes", {
         slug: newSlug,
         title: newTitle,
         summary: newSummary || null,

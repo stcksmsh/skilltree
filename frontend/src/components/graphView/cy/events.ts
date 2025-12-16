@@ -1,9 +1,9 @@
 import type cytoscape from "cytoscape";
-import type { NodeOut } from "@/components/graphView/types";
+import type { AbstractNodeOut } from "@/components/graphView/types";
 
 export function installGraphEvents(opts: {
   cy: cytoscape.Core;
-  onSelect: (n: NodeOut | null) => void;
+  onSelect: (n: AbstractNodeOut | null) => void;
   restoreAll: () => void;
   highlightSelected: (id: string) => void;
   shouldHighlight: () => boolean;
@@ -16,7 +16,20 @@ export function installGraphEvents(opts: {
     evt.target.select();
 
     const d = evt.target.data();
-    const node: NodeOut = { id: d.id, slug: d.slug, title: d.title, summary: d.summary ?? null };
+    const node: AbstractNodeOut = {
+      id: d.id,
+      slug: d.slug,
+      title: d.title,
+      short_title: d.short_title,
+      summary: d.summary,
+      body_md: d.body_md,
+      kind: d.kind,
+      parent_id: d.parent_id,
+      has_children: d.has_children,
+      has_variants: d.has_variants,
+      default_impl_id: d.default_impl_id,
+      impls: d.impls,
+    };
     onSelect(node);
 
     console.log("[tap] node", d.id, "highlight?", shouldHighlight());
