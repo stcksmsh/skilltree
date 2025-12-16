@@ -4,52 +4,61 @@ import type { AbstractNodeOut } from "@/components/graphView/types";
 export function installGraphEvents(opts: {
   cy: cytoscape.Core;
   onSelect: (n: AbstractNodeOut | null) => void;
+  onEnterFocus: (abstractId: string) => void;
   restoreAll: () => void;
   highlightSelected: (id: string) => void;
   shouldHighlight: () => boolean;
 }) {
-  const { cy, onSelect, restoreAll, highlightSelected, shouldHighlight } = opts;
+  const { cy, onSelect, onEnterFocus, restoreAll, highlightSelected, shouldHighlight } = opts;
 
-  // node click
-  cy.on("tap", "node", (evt) => {
-    cy.$("node").unselect();
-    evt.target.select();
-
+  const readNodeOut = (evt: cytoscape.EventObject): AbstractNodeOut => {
     const d = evt.target.data();
-    const node: AbstractNodeOut = {
+    return {
       id: d.id,
       slug: d.slug,
       title: d.title,
       short_title: d.short_title,
-      summary: d.summary,
-      body_md: d.body_md,
+      summary: d.summary ?? null,
+      body_md: d.body_md ?? null,
       kind: d.kind,
-      parent_id: d.parent_id,
-      has_children: d.has_children,
-      has_variants: d.has_variants,
-      default_impl_id: d.default_impl_id,
-      impls: d.impls,
+      parent_id: d.parent_id || null,
+      has_children: !!d.has_children,
+      has_variants: !!d.has_variants,
+      default_impl_id: d.default_impl_id || null,
+      impls: d.impls ?? [],
     };
-    onSelect(node);
+  };
 
-    console.log("[tap] node", d.id, "highlight?", shouldHighlight());
+  // single click selects (no focus change)
+  cy.on("tap", "node", (evt) => {
+    cy.$("node").unselect();
+    evt.target.select();
+
+    const node = readNodeOut(evt);
+    onSelect(node);
 
     if (shouldHighlight()) {
       restoreAll();
-      highlightSelected(d.id);
+      highlightSelected(node.id);
     }
   });
 
-  // background click
+  // double click enters focus (only if expandable)
+  cy.on("dbltap", "node", (evt) => {
+    const node = readNodeOut(evt);
+
+    // only enter on groups (or anything you consider expandable)
+    if (node.kind === "group" && node.has_children) {
+      onEnterFocus(node.id);
+    }
+  });
+
+  // background click clears selection
   cy.on("tap", (evt) => {
     if (evt.target !== cy) return;
 
     cy.$("node").unselect();
     onSelect(null);
-
-    // if highlight mode is on, still restore visuals on deselect
     restoreAll();
-
-    console.log("[tap] background -> cleared selection");
   });
 }

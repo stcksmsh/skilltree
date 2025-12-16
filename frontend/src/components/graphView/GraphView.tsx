@@ -17,12 +17,14 @@ type BundleKey = `${string}::${string}::${string}`;
 export function GraphView({
   graph,
   onSelect,
+  onEnterFocus,
   onCyReady,
   selectedId,
   highlightPrereqs,
 }: {
   graph: GraphOut;
   onSelect: (n: AbstractNodeOut | null) => void;
+  onEnterFocus?: (id: string) => void;
   onCyReady?: (cy: Core) => void;
   selectedId?: string | null;
   highlightPrereqs?: boolean;
@@ -33,23 +35,29 @@ export function GraphView({
   const restoreAllRef = useRef<(() => void) | null>(null);
   const highlightRef = useRef<((id: string) => void) | null>(null);
 
+  const onEnterFocusRef = useRef(onEnterFocus);
+  
   // keep callbacks stable without re-creating cytoscape
   const onSelectRef = useRef(onSelect);
   const onCyReadyRef = useRef(onCyReady);
   const highlightEnabledRef = useRef<boolean>(!!highlightPrereqs);
-
+  
   useEffect(() => {
     onSelectRef.current = onSelect;
   }, [onSelect]);
-
+  
   useEffect(() => {
     onCyReadyRef.current = onCyReady;
   }, [onCyReady]);
-
+  
   useEffect(() => {
     highlightEnabledRef.current = !!highlightPrereqs;
   }, [highlightPrereqs]);
-
+  
+  useEffect(() => {
+    onEnterFocusRef.current = onEnterFocus;
+  }, [onEnterFocus]);
+  
   const elements = useMemo(() => {
     // --- impl_id -> abstract_id mapping
     const implToAbs = new Map<string, string>();
@@ -166,6 +174,7 @@ export function GraphView({
     installGraphEvents({
       cy,
       onSelect: (n) => onSelectRef.current(n),
+      onEnterFocus: (id) => onEnterFocusRef.current?.(id),
       restoreAll,
       highlightSelected: highlight,
       shouldHighlight: () => !!highlightEnabledRef.current,

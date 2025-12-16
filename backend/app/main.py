@@ -285,13 +285,36 @@ async def get_graph_focus(
             if p.parent_id and p.parent_id not in abs_by_id:
                 missing_parent_ids.add(p.parent_id)
 
-    def find_boundary_group(outside_abstract: AbstractNode) -> AbstractNode:
-        cur2 = outside_abstract
-        while cur2.parent_id is not None:
-            if cur2.parent_id in inside_abs_ids:
-                return cur2
-            cur2 = abs_by_id[cur2.parent_id]
-        return cur2
+    def collect_ancestor_ids(node: AbstractNode) -> set[UUID]:
+        ids: set[UUID] = set()
+        cur = node
+        while True:
+            ids.add(cur.id)
+            if cur.parent_id is None:
+                break
+            cur = abs_by_id[cur.parent_id]
+        return ids
+
+    focus_ancestor_ids = collect_ancestor_ids(focus)
+
+    def find_boundary_group(outside_abs: AbstractNode) -> AbstractNode:
+        cur = outside_abs
+
+        # climb up as long as the parent is NOT in the focus ancestor chain
+        while cur.parent_id is not None and cur.parent_id not in focus_ancestor_ids:
+            cur = abs_by_id[cur.parent_id]
+
+        # `cur` is now the topmost node in its branch that is still outside the focus ancestor chain
+        # Optional: enforce returning a group if your UI expects groups only
+        if cur.kind != 'group':
+            # walk up until group or root (still outside focus chain due to loop stop condition)
+            tmp = cur
+            while tmp.parent_id is not None and tmp.parent_id not in focus_ancestor_ids:
+                tmp = abs_by_id[tmp.parent_id]
+                if tmp.kind == 'group':
+                    return tmp
+        return cur
+
 
     # ---------- 8) prerequisite impls: requires edges from inside -> outside ----------
     # NOTE: this is the corrected direction

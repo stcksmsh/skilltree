@@ -9,6 +9,7 @@ import { GraphOut, AbstractNodeOut, ImplOut, GraphView } from "@/components/grap
 import { VIEW_ANIM } from "@/components/graph/constants";
 import { GraphToolbar } from "@/components/graph/GraphToolbar";
 import { Sidebar } from "@/components/graph/GraphSidebar";
+import { BoundaryPanel } from "@/components/graph/BoundaryPanel";
 
 import { layoutStyles } from "@/components/graph/styles";
 
@@ -106,25 +107,16 @@ export default function Page() {
       <div style={layoutStyles.graphPane}>
         <GraphToolbar cyRef={cyRef} selectedId={selected?.id ?? null} focusId={focusId} popFocus={popFocus} />
 
-        { graph && graph.boundary_hints.length > 0 && 
-          (
-            <div className="boundary-panel">
-              <h4>External dependencies</h4>
-              {graph.boundary_hints.map((h) => (
-                <div
-                  key={`${h.group_id}-${h.type}`}
-                  className={`boundary-hint ${h.type}`}
-                  onClick={() => {
-                    // navigate OUT to that group
-                    setFocusStack((s) => [...s, h.group_id]);
-                    setFocusId(h.group_id);
-                    load(h.group_id);
-                  }}
-                >
-                  {h.short_title} ({h.count})
-                </div>
-              ))}
-            </div>
+        {graph && (
+            <BoundaryPanel
+              graph={graph}
+              onJump={(groupId) => {
+                setFocusStack((s) => [...s, groupId]);
+                setFocusId(groupId);
+                load(groupId);
+                setSelected(null);
+              }}
+            />
           )
         }
 
@@ -160,6 +152,20 @@ export default function Page() {
                   setSelected(null);
                 }, 420); // let animation finish
               }
+            }}
+            onEnterFocus={ async (id) => {
+              setFocusStack((s) => [...s, id]);
+              setFocusId(id);
+              await load(id);
+              setSelected(null);
+
+              // 4) detail: fit after graph switches
+              requestAnimationFrame(() => {
+                const cy = cyRef.current;
+                if (!cy) return;
+                const visible = cy.elements(":visible");
+                if (visible.nonempty()) cy.fit(visible, 30);
+              });
             }}
             onCyReady={(cy) => {
               cyRef.current = cy;
