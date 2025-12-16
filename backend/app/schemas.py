@@ -13,7 +13,7 @@ class AbstractNodeOut(BaseModel):
     summary: Optional[str] = None
     body_md: Optional[str] = None
 
-    kind: str  # or Literal[...] / Enum
+    kind: str
     parent_id: Optional[UUID] = None
 
     has_children: bool
@@ -41,11 +41,21 @@ class RelatedEdgeOut(BaseModel):
     b_id: UUID
 
 
+class BoundaryHintOut(BaseModel):
+    group_id: UUID
+    title: str
+    short_title: str
+    type: str
+    count: int
+
+
 class GraphOut(BaseModel):
     abstract_nodes: list[AbstractNodeOut]
     impl_nodes: list[ImplOut]
     edges: list[EdgeOut]
     related_edges: list[RelatedEdgeOut]
+    boundary_hints: list[BoundaryHintOut]
+
 
 class NodeCreateIn(BaseModel):
     slug: str = Field(min_length=1, max_length=120)

@@ -36,9 +36,18 @@ export type RelatedEdgeOut = {
   b_id: string;
 };
 
+export type BoundaryHintOut = {
+  group_id: string;
+  title: string;
+  short_title: string;
+  type: "requires" | "recommended";
+  count: number;
+};
+
 export type GraphOut = {
   abstract_nodes: AbstractNodeOut[];
   impl_nodes: ImplOut[];
   edges: EdgeOut[];
   related_edges: RelatedEdgeOut[];
+  boundary_hints: BoundaryHintOut[];
 };

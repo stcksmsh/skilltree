@@ -9,9 +9,13 @@ import { runRelayout } from "../graphView/cy/style";
 export function GraphToolbar({
   cyRef,
   selectedId,
+  focusId,
+  popFocus,
 }: {
   cyRef: React.RefObject<Core | null>;
   selectedId: string | null;
+  focusId: string | null;
+  popFocus: () => void;
 }) {
   return (
     <div
@@ -98,6 +102,13 @@ export function GraphToolbar({
       >
         Center
       </button>
+
+
+      {focusId && (
+        <button onClick={popFocus} style={{ marginRight: 8 }}>
+          ← Back
+        </button>
+      )}
     </div>
   );
 }

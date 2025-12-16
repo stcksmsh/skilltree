@@ -59,7 +59,7 @@ async def seed_minimal(session: AsyncSession) -> None:
     # -------------------------
     math = a("math", "Math", "Math", kind=AbstractNodeKind.group, summary="Mathematical foundations.")
     physics = a("physics", "Physics", "Phys", kind=AbstractNodeKind.group, summary="Physics concepts.")
-    dsp_group = a("signal-processing", "Signal Processing", "DSP", kind=AbstractNodeKind.group, summary="DSP domain.")
+    dsp_group = a("signals", "Signal Processing", "DSP", kind=AbstractNodeKind.group, summary="DSP domain.")
 
     session.add_all([math, physics, dsp_group])
     await session.flush()  # IDs for parent_id
