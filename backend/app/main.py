@@ -8,7 +8,8 @@ from .db import get_session
 from .seed import seed_minimal
 
 from .routes.graph_router import router as graph_router
-
+from .logging_config import setup_logging
+setup_logging()
 
 app = FastAPI(title="SkillTree MVP")
 

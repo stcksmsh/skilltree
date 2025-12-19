@@ -10,7 +10,7 @@ export function Legend() {
         <strong>Legend</strong>
       </div>
       <div>→ solid arrow: requires</div>
-      <div>→ dashed arrow: recommended (rank label)</div>
+      <div>→ dashed arrow: recommended</div>
       <div>→ dotted line: related</div>
     </div>
   );

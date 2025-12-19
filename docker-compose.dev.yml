@@ -17,6 +17,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://skilltree:skilltree@db:5432/skilltree
       CORS_ORIGINS: http://localhost:3000
+      LOG_LEVEL: debug
     volumes:
       - ./backend:/app
     depends_on:
@@ -32,6 +33,7 @@ services:
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
       WATCHPACK_POLLING: "true"
       CHOKIDAR_USEPOLLING: "true"
+      LOG_LEVEL: debug
     volumes:
       - ./frontend:/app
       - /app/node_modules
