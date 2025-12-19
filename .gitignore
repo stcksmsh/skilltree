@@ -97,3 +97,8 @@ docker-compose.override.yml
 ############################
 *.tgz
 *.tar.gz
+
+############################
+# Test
+############################
+backend/reports
