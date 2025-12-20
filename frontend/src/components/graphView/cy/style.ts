@@ -134,9 +134,10 @@ export function runRelayout(cy: cytoscape.Core) {
     spacingFactor: 1.15,
   } as any);
 
-  layout.run();
-
   layout.one("layoutstop", () => {
+    // SAFETY: ensure graph still exists
+    if (cy.destroyed()) return;
+
     routeCurvedEdgesAvoidingNodes(cy, {
       onlySelector: "edge.requires:visible",
       nodePadding: 14,
@@ -145,7 +146,10 @@ export function runRelayout(cy: cytoscape.Core) {
       bendStep: 20,
     });
   });
+
+  layout.run();
 }
+
 
 export function runRelayoutAsync(cy: cytoscape.Core): Promise<void> {
   return new Promise((resolve) => {
@@ -160,7 +164,10 @@ export function runRelayoutAsync(cy: cytoscape.Core): Promise<void> {
       spacingFactor: 1.15,
     } as any);
 
-    layout.one("layoutstop", () => resolve());
+    layout.one("layoutstop", () => {
+      if (!cy.destroyed()) resolve();
+    });
+
     layout.run();
   });
 }

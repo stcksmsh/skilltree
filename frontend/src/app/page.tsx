@@ -4,9 +4,8 @@ import React, { useEffect, useRef, useState } from "react";
 import type { Core } from "cytoscape";
 
 import { apiGet, apiPost } from "@/lib/api";
-import { GraphOut, AbstractNodeOut, ImplOut, GraphView } from "@/components/graphView/index";
+import { GraphOut, AbstractNodeOut, GraphStage, GraphStageHandle } from "@/components/graphView/index";
 
-import { VIEW_ANIM } from "@/components/graph/constants";
 import { GraphToolbar } from "@/components/graph/GraphToolbar";
 import { Sidebar } from "@/components/graph/GraphSidebar";
 import { BoundaryPanel } from "@/components/graph/BoundaryPanel";
@@ -27,10 +26,8 @@ export default function Page() {
     anchorPan?: { x: number; y: number };
     anchorZoom?: number;
   };
-  const pendingEnterRef = useRef<FocusEntry | null>(null);
   const [focusStack, setFocusStack] = useState<FocusEntry[]>([]);
-  const focusId = focusStack.length ? focusStack[focusStack.length - 1].id : null;
-  const focusTop = focusStack.length ? focusStack[focusStack.length - 1] : null;
+  const focusId = focusStack.length ? focusStack[focusStack.length - 1].id : null;  
 
   const cyRef = useRef<Core | null>(null);
 
@@ -39,14 +36,7 @@ export default function Page() {
   const [showRelated, setShowRelated] = useState(true);
   const [highlightPrereqs, setHighlightPrereqs] = useState(false);
 
-  type PendingCamera = {
-    pan: { x: number; y: number };
-    zoom: number;
-    centerNodeId?: string;
-  };
-
-  const [pendingCamera, setPendingCamera] = useState<PendingCamera | null>(null);
-
+  const stageRef = useRef<GraphStageHandle | null>(null);
 
   function applyEdgeVisibility(cy: Core, opts: {
     showRequires: boolean;
@@ -122,67 +112,37 @@ export default function Page() {
     }
   }
 
-  async function drillEnterFocus(id: string, meta?: { fromNodeId?: string; fromRenderPos?: { x: number; y: number } }) {
-    setSelected(null);
-
-    const cy = cyRef.current;
-
-    // record an anchor *only* (no animation here)
-    if (cy) {
-      const el = cy.getElementById(id);
-      if (el.nonempty()) {
-        // capture "back target" in the PARENT graph coordinates
-        const anchorPan = cy.pan();
-        const anchorZoom = cy.zoom();
-        const anchorPos = meta?.fromRenderPos ?? el.renderedPosition();
-
-        // Phase A: pre-zoom into the super-node (smooth + deterministic)
-        cy.stop();
-
-        // Fade the super-node a bit during the pre-zoom (cheap illusion; true fade comes later)
-        try {
-          el.animate({ style: { opacity: 0.25 } }, { duration: 240, easing: "ease-in-out-cubic" });
-        } catch {}
-
-        const nextZoom = Math.min(Math.max(anchorZoom * 1.35, 0.6), 3.0);
-        const a = cy.animation(
-          { center: { eles: el }, zoom: nextZoom },
-          { duration: 420, easing: "ease-in-out-cubic" }
-        );
-        a.play();
-        await a.promise("completed");
-
-        pushFocus({ id, fromNodeId: id, anchorPos, anchorPan, anchorZoom });
-        return;
-      }
-    }
-
-    pushFocus({ id, fromNodeId: id });
-  }
-
   function pushFocus(entry: FocusEntry) {
     setSelected(null);
     setFocusStack((s) => (s.at(-1)?.id === entry.id ? s : [...s, entry]));
   }
 
-
-  function popFocus() {
+  async function popFocus() {
     setSelected(null);
 
-    const prevEntry = focusTop; // the focus we are leaving (contains parent camera snapshot)
-    const goingBackTo = focusStack.length >= 2 ? focusStack[focusStack.length - 2] : null;
+    // If no focus, nothing to pop
+    if (focusStack.length === 0) return;
 
-    if (prevEntry?.anchorPan && typeof prevEntry.anchorZoom === "number") {
-      setPendingCamera({
-        pan: prevEntry.anchorPan,
-        zoom: prevEntry.anchorZoom,
-        centerNodeId: prevEntry.fromNodeId ?? goingBackTo?.id ?? undefined,
-      });
-    } else {
-      setPendingCamera(null);
-    }
-    
+    const leaving = focusStack[focusStack.length - 1];
+    const target = focusStack.length >= 2 ? focusStack[focusStack.length - 2] : null;
+
+    // Load the graph we’re returning to
+    const parentGraph = await apiGet<GraphOut>(
+      target ? `/api/graph/focus/${target.id}` : "/api/graph"
+    );
+
+    // Animate exit first (so we don't swap the "graph" prop mid-animation)
+    await stageRef.current?.exitFocus({
+      parentGraph,
+      targetCamera:
+        leaving?.anchorPan && typeof leaving.anchorZoom === "number"
+          ? { pan: leaving.anchorPan, zoom: leaving.anchorZoom }
+          : null,
+    });
+
+    // Now commit nav state
     setFocusStack((s) => s.slice(0, -1));
+    setGraph(parentGraph);
   }
 
   useEffect(() => { if (focusId) load(focusId); else load(null); }, [focusId]);
@@ -215,41 +175,18 @@ export default function Page() {
         }
 
         {graph ? (
-          <GraphView
+          <GraphStage
+            ref={stageRef}
             graph={graph}
-            focusMeta={focusTop}
-            pendingCamera={pendingCamera}
-            onPendingCameraApplied={() => setPendingCamera(null)}
-            onSelect={(n) => {
-              setSelected(n);
-
-              if (!n) return;
-
-              const cy = cyRef.current;
-
-              if (!cy) return;
-
-              const el = cy.getElementById(n.id);
-
-              if (!el.empty()) {
-                const targetZoom = Math.max(cy.zoom(), VIEW_ANIM.center.minZoom);
-                cy.animate(
-                  { center: { eles: el }, zoom: targetZoom },
-                  { duration: 400, easing: VIEW_ANIM.easing }
-                );
-              }
+            onEnterFocus={async (id: string) => {
+              const g = await apiGet<GraphOut>(`/api/graph/focus/${id}`);
+              return g;
             }}
-            onEnterFocus={async (id, meta) => {
-              await drillEnterFocus(id, meta);
+            onDidEnterFocus={(entry) => {
+              setFocusStack((s) => (s.at(-1)?.id === entry.id ? s : [...s, entry]));
             }}
-            onCyReady={(cy) => {
-              cyRef.current = cy;
-              applyEdgeVisibility(cy, {
-                showRequires,
-                showRecommended,
-                showRelated,
-              });
-            }}
+            onSelect={setSelected}
+            onCyReady={(cy: Core) => (cyRef.current = cy)}
             selectedId={selected?.id ?? null}
             highlightPrereqs={highlightPrereqs}
           />
@@ -264,7 +201,7 @@ export default function Page() {
           setError(null);
           try {
             await apiPost("/api/admin/seed");
-            await load();
+            await load(null);
             setSelected(null);
           } catch (e: any) {
             setError(e?.message ?? String(e));

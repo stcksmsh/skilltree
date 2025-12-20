@@ -12,6 +12,7 @@ export const layoutStyles = {
   graphPane: {
     minWidth: 0,
     position: "relative",
+    flex: 1
   } as React.CSSProperties,
 
   sidebar: {
