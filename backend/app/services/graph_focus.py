@@ -1,10 +1,11 @@
+# services/graph_focus.py
 from __future__ import annotations
 
 from dataclasses import dataclass
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import AbstractNode, ImplNode, ImplContext, Edge, EdgeType
@@ -15,87 +16,43 @@ import logging
 log = logging.getLogger("graph.focus")
 
 
-# ----------------------------
-# Public entry point
-# ----------------------------
-
 async def build_focus_graph(*, session: AsyncSession, focus_abstract_id: UUID) -> GraphOut:
     """
-    Focus graph rules (current MVP, corrected):
-    - Base inside abstracts = focus + direct children
-    - Expand inside abstracts with OUTGOING external concept targets:
-        - If an ACTIVE inside impl has an edge to an impl whose abstract is a concept outside the inside set,
-          include that concept abstract (1-hop).
-        - This is what makes DSP/Physics show Fourier even though Fourier's abstract lives under Math.
-      IMPORTANT: this is OUTGOING only, so Math focus won't pull in QM/S&S.
-    - Active impls in this focus context:
+    Focus graph (children-only):
+    - Visible abstracts = direct children of focus (NOT the focus node itself)
+    - Active impls:
         - impl has NO ImplContext rows  => global => active everywhere
         - impl has ImplContext rows     => active iff focus_abstract_id is in them
       Active impls are used for INTERNAL edges + impl_nodes.
     - Boundary hints consider edges touching ANY impl that belongs to inside abstracts,
-      INCLUDING inactive variants (so we can hint cross-domain prerequisites through inactive variants).
+      INCLUDING inactive variants.
+    - No "outgoing external concept expansion" in this mode (keep "inside" pure).
     """
 
-    # ---------- 1) focus ----------
+    # 1) focus existence (used for boundary grouping / ancestor chain)
     focus = await session.get(AbstractNode, focus_abstract_id)
     if not focus:
         raise HTTPException(status_code=404, detail="Abstract node not found")
 
-    # ---------- 2) inside abstracts = focus + direct children ----------
-    children = (
-        await session.execute(
-            select(AbstractNode).where(AbstractNode.parent_id == focus_abstract_id)
+    # 2) inside abstracts = children only
+    inside_abs = await _load_descendants(session=session, root_id=focus_abstract_id)
+    inside_abs_ids = {n.id for n in inside_abs}
+
+
+    # If empty group, return empty interior (still can show boundary hints = none)
+    if not inside_abs_ids:
+        return GraphOut(
+            abstract_nodes=[],
+            impl_nodes=[],
+            edges=[],
+            related_edges=[],
+            boundary_hints=[],
         )
-    ).scalars().all()
 
-    inside_abs: list[AbstractNode] = [focus, *children]
-    inside_abs_ids: set[UUID] = {n.id for n in inside_abs}
-
-    # ---------- 3) build state for base inside ----------
+    # 3) build state for inside-only
     state = await _build_state(session=session, focus=focus, inside_abs_ids=inside_abs_ids)
 
-    log.debug(
-        "STATE1 focus=%s inside_abs=%s inside_impls_all=%s inside_impls_active=%s edges_any_inside=%s",
-        str(focus.id),
-        len(inside_abs_ids),
-        len(state.inside_impls_all),
-        len(state.inside_impls_active),
-        len(state.touching_edges_any_inside_impl),
-    )
-
-    # ---------- 4) expand with OUTGOING external concept targets ----------
-    extra_abs_ids = _collect_outgoing_concept_targets_to_include(
-        inside_abs_ids=inside_abs_ids,
-        inside_impl_ids_active=state.inside_impl_ids_active,
-        touching_edges_any_inside_impl=state.touching_edges_any_inside_impl,
-        impl_by_id=state.impl_by_id,
-        abs_by_id=state.abs_by_id,
-    )
-
-    log.debug("EXPAND outgoing_concept_targets count=%s ids=%s",
-              len(extra_abs_ids), sorted(map(str, extra_abs_ids))[:20])
-
-    if extra_abs_ids:
-        extra_abs = (
-            await session.execute(select(AbstractNode).where(AbstractNode.id.in_(extra_abs_ids)))
-        ).scalars().all()
-
-        inside_abs.extend(extra_abs)
-        inside_abs_ids |= extra_abs_ids
-
-        # rebuild state because "inside abstracts" changed (adds Fourier into DSP/Physics focus)
-        state = await _build_state(session=session, focus=focus, inside_abs_ids=inside_abs_ids)
-
-        log.debug(
-            "STATE2 focus=%s inside_abs=%s inside_impls_all=%s inside_impls_active=%s edges_any_inside=%s",
-            str(focus.id),
-            len(inside_abs_ids),
-            len(state.inside_impls_all),
-            len(state.inside_impls_active),
-            len(state.touching_edges_any_inside_impl),
-        )
-
-    # ---------- 5) boundary grouping helpers ----------
+    # 4) ancestor set for boundary grouping (focus chain)
     focus_ancestor_ids = _build_ancestor_set(focus, state.abs_by_id)
 
     def find_boundary_group(outside_abs: AbstractNode) -> AbstractNode:
@@ -115,13 +72,13 @@ async def build_focus_graph(*, session: AsyncSession, focus_abstract_id: UUID) -
                 return cur
             cur = nxt
 
-    # ---------- 6) internal edges (ACTIVE-only) ----------
+    # 5) internal edges (ACTIVE-only)
     internal_edges: list[Edge] = []
     for e in state.touching_edges_any_inside_impl:
         if e.src_impl_id in state.inside_impl_ids_active and e.dst_impl_id in state.inside_impl_ids_active:
             internal_edges.append(e)
 
-    # ---------- 7) boundary hints (ANY inside-impl, including inactive variants) ----------
+    # 6) boundary hints (ANY inside-impl, including inactive variants)
     boundary_map: dict[tuple[UUID, EdgeType], int] = {}
 
     for e in state.touching_edges_any_inside_impl:
@@ -136,7 +93,6 @@ async def build_focus_graph(*, session: AsyncSession, focus_abstract_id: UUID) -
         src_abs_in = src_abs_id in inside_abs_ids
         dst_abs_in = dst_abs_id in inside_abs_ids
 
-        # boundary edge = exactly one abstract is inside
         if not (src_abs_in ^ dst_abs_in):
             continue
 
@@ -149,8 +105,6 @@ async def build_focus_graph(*, session: AsyncSession, focus_abstract_id: UUID) -
         key = (boundary_group.id, e.type)
         boundary_map[key] = boundary_map.get(key, 0) + 1
 
-    log.debug("BOUNDARY internal_edges=%s boundary_map_keys=%s", len(internal_edges), len(boundary_map))
-
     boundary_hints = [
         BoundaryHintOut(
             group_id=gid,
@@ -162,9 +116,18 @@ async def build_focus_graph(*, session: AsyncSession, focus_abstract_id: UUID) -
         for (gid, edge_type), count in boundary_map.items()
     ]
 
-    # ---------- 8) pack output ----------
-    # abstract.impls should include ALL impl variants for that abstract (variant picker),
-    # even if some variants are inactive in this focus.
+    # 7) compute has_children for returned inside abstracts (so nested groups are drillable)
+    children_counts = dict(
+        (
+            await session.execute(
+                select(AbstractNode.parent_id, func.count())
+                .where(AbstractNode.parent_id.in_(inside_abs_ids))
+                .group_by(AbstractNode.parent_id)
+            )
+        ).all()
+    )
+
+    # 8) pack output
     abs_id_to_impls_all: dict[UUID, list[ImplNode]] = {}
     for i in state.inside_impls_all:
         abs_id_to_impls_all.setdefault(i.abstract_id, []).append(i)
@@ -178,6 +141,7 @@ async def build_focus_graph(*, session: AsyncSession, focus_abstract_id: UUID) -
     abstract_nodes_out: list[AbstractNodeOut] = []
     for n in inside_abs:
         impls = abs_id_to_impls_all.get(n.id, [])
+
         abstract_nodes_out.append(
             AbstractNodeOut(
                 id=n.id,
@@ -186,9 +150,9 @@ async def build_focus_graph(*, session: AsyncSession, focus_abstract_id: UUID) -
                 short_title=n.short_title,
                 summary=n.summary,
                 body_md=n.body_md,
-                kind=n.kind,
+                kind=n.kind.value if hasattr(n.kind, "value") else str(n.kind),
                 parent_id=n.parent_id,
-                has_children=(n.id == focus_abstract_id and len(children) > 0),
+                has_children=(children_counts.get(n.id, 0) > 0),
                 has_variants=(len(impls) > 1),
                 default_impl_id=pick_default_impl_id(impls),
                 impls=[
@@ -205,7 +169,6 @@ async def build_focus_graph(*, session: AsyncSession, focus_abstract_id: UUID) -
 
     return GraphOut(
         abstract_nodes=abstract_nodes_out,
-        # impl_nodes = ACTIVE impls only (prevents leaking variants into other contexts)
         impl_nodes=[
             ImplOut(
                 id=i.id,
@@ -231,48 +194,7 @@ async def build_focus_graph(*, session: AsyncSession, focus_abstract_id: UUID) -
 
 
 # ----------------------------
-# Outgoing expansion helper
-# ----------------------------
-
-def _collect_outgoing_concept_targets_to_include(
-    *,
-    inside_abs_ids: set[UUID],
-    inside_impl_ids_active: set[UUID],
-    touching_edges_any_inside_impl: list[Edge],
-    impl_by_id: dict[UUID, ImplNode],
-    abs_by_id: dict[UUID, AbstractNode],
-) -> set[UUID]:
-    """
-    Include external concept abstracts that are *targets* of edges from ACTIVE inside impls.
-
-    This is the key asymmetry:
-    - DSP focus: S&S (inside, active) -> Fourier(signals) (outside concept) => include Fourier.
-    - Physics focus: QM (inside, active) -> Fourier(physics) (outside concept) => include Fourier.
-    - Math focus: QM/S&S are not targets of edges from Math active impls => NOT included.
-    """
-    extra_abs_ids: set[UUID] = set()
-
-    for e in touching_edges_any_inside_impl:
-        if e.src_impl_id not in inside_impl_ids_active:
-            continue  # ONLY outgoing from active inside
-
-        dst_impl = impl_by_id.get(e.dst_impl_id)
-        if not dst_impl:
-            continue
-
-        dst_abs_id = dst_impl.abstract_id
-        if dst_abs_id in inside_abs_ids:
-            continue
-
-        dst_abs = abs_by_id.get(dst_abs_id)
-        if dst_abs and dst_abs.kind == "concept":
-            extra_abs_ids.add(dst_abs_id)
-
-    return extra_abs_ids
-
-
-# ----------------------------
-# Internal state builder
+# Internal state builder (unchanged)
 # ----------------------------
 
 @dataclass(frozen=True)
@@ -288,7 +210,6 @@ class _State:
 
 
 async def _build_state(*, session: AsyncSession, focus: AbstractNode, inside_abs_ids: set[UUID]) -> _State:
-    # 1) ALL impls for inside abstracts (variants included)
     inside_impls_all = (
         await session.execute(
             select(ImplNode).where(ImplNode.abstract_id.in_(inside_abs_ids))
@@ -296,7 +217,6 @@ async def _build_state(*, session: AsyncSession, focus: AbstractNode, inside_abs
     ).scalars().all()
     inside_impl_ids_all = {i.id for i in inside_impls_all}
 
-    # 2) contexts for those impls
     impl_ctx: dict[UUID, set[UUID]] = {}
     if inside_impl_ids_all:
         rows = (
@@ -307,7 +227,6 @@ async def _build_state(*, session: AsyncSession, focus: AbstractNode, inside_abs
         for c in rows:
             impl_ctx.setdefault(c.impl_id, set()).add(c.context_abstract_id)
 
-    # Active rule: global if no ImplContext rows, otherwise must match focus id
     def impl_is_active_in_focus(impl_id: UUID) -> bool:
         ctxs = impl_ctx.get(impl_id)
         return (ctxs is None) or (focus.id in ctxs)
@@ -315,7 +234,6 @@ async def _build_state(*, session: AsyncSession, focus: AbstractNode, inside_abs
     inside_impls_active = [i for i in inside_impls_all if impl_is_active_in_focus(i.id)]
     inside_impl_ids_active = {i.id for i in inside_impls_active}
 
-    # 3) edges touching ANY inside impl (for boundary)
     touching_edges_any_inside_impl: list[Edge] = []
     if inside_impl_ids_all:
         touching_edges_any_inside_impl = (
@@ -327,7 +245,6 @@ async def _build_state(*, session: AsyncSession, focus: AbstractNode, inside_abs
             )
         ).scalars().all()
 
-    # 4) load impls referenced by those edges
     edge_impl_ids = {e.src_impl_id for e in touching_edges_any_inside_impl} | {e.dst_impl_id for e in touching_edges_any_inside_impl}
 
     edge_impls: list[ImplNode] = []
@@ -338,7 +255,6 @@ async def _build_state(*, session: AsyncSession, focus: AbstractNode, inside_abs
 
     impl_by_id: dict[UUID, ImplNode] = {i.id: i for i in edge_impls}
 
-    # 5) load abstracts referenced by those impls (+ focus)
     abs_ids = {i.abstract_id for i in edge_impls} | {focus.id}
     abstracts = (
         await session.execute(select(AbstractNode).where(AbstractNode.id.in_(abs_ids)))
@@ -346,16 +262,6 @@ async def _build_state(*, session: AsyncSession, focus: AbstractNode, inside_abs
     abs_by_id: dict[UUID, AbstractNode] = {a.id: a for a in abstracts}
 
     await _preload_ancestors(session=session, abs_by_id=abs_by_id)
-
-    log.debug(
-        "BUILD_STATE inside_impls_all=%s inside_impls_active=%s edges_any_inside=%s edge_impls=%s abs_by_id=%s impl_ctx_keys=%s",
-        len(inside_impls_all),
-        len(inside_impls_active),
-        len(touching_edges_any_inside_impl),
-        len(edge_impls),
-        len(abs_by_id),
-        len(impl_ctx),
-    )
 
     return _State(
         inside_impls_all=inside_impls_all,
@@ -367,10 +273,6 @@ async def _build_state(*, session: AsyncSession, focus: AbstractNode, inside_abs
         abs_by_id=abs_by_id,
     )
 
-
-# ----------------------------
-# Ancestor helpers
-# ----------------------------
 
 def _build_ancestor_set(focus: AbstractNode, abs_by_id: dict[UUID, AbstractNode]) -> set[UUID]:
     ids: set[UUID] = set()
@@ -404,3 +306,29 @@ async def _preload_ancestors(*, session: AsyncSession, abs_by_id: dict[UUID, Abs
             abs_by_id[p.id] = p
             if p.parent_id is not None and p.parent_id not in abs_by_id:
                 missing.add(p.parent_id)
+
+async def _load_descendants(*, session: AsyncSession, root_id: UUID) -> list[AbstractNode]:
+    out: list[AbstractNode] = []
+    frontier: list[UUID] = [root_id]
+    seen: set[UUID] = {root_id}
+
+    while frontier:
+        rows = (
+            await session.execute(
+                select(AbstractNode).where(AbstractNode.parent_id.in_(frontier))
+            )
+        ).scalars().all()
+
+        if not rows:
+            break
+
+        out.extend(rows)
+
+        nxt: list[UUID] = []
+        for n in rows:
+            if n.id not in seen:
+                seen.add(n.id)
+                nxt.append(n.id)
+        frontier = nxt
+
+    return out
