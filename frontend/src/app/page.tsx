@@ -20,9 +20,17 @@ export default function Page() {
   const [selected, setSelected] = useState<AbstractNodeOut | null>(null);
   const [error, setError] = useState<string | null>(null);
   
-  type FocusEntry = { id: string };
+  type FocusEntry = {
+    id: string;
+    fromNodeId?: string;
+    anchorPos?: { x: number; y: number };
+    anchorPan?: { x: number; y: number };
+    anchorZoom?: number;
+  };
+  const pendingEnterRef = useRef<FocusEntry | null>(null);
   const [focusStack, setFocusStack] = useState<FocusEntry[]>([]);
   const focusId = focusStack.length ? focusStack[focusStack.length - 1].id : null;
+  const focusTop = focusStack.length ? focusStack[focusStack.length - 1] : null;
 
   const cyRef = useRef<Core | null>(null);
 
@@ -30,6 +38,15 @@ export default function Page() {
   const [showRecommended, setShowRecommended] = useState(true);
   const [showRelated, setShowRelated] = useState(true);
   const [highlightPrereqs, setHighlightPrereqs] = useState(false);
+
+  type PendingCamera = {
+    pan: { x: number; y: number };
+    zoom: number;
+    centerNodeId?: string;
+  };
+
+  const [pendingCamera, setPendingCamera] = useState<PendingCamera | null>(null);
+
 
   function applyEdgeVisibility(cy: Core, opts: {
     showRequires: boolean;
@@ -105,13 +122,66 @@ export default function Page() {
     }
   }
 
-  function pushFocus(id: string) {
+  async function drillEnterFocus(id: string, meta?: { fromNodeId?: string; fromRenderPos?: { x: number; y: number } }) {
     setSelected(null);
-    setFocusStack((s) => (s.at(-1)?.id === id ? s : [...s, { id }]));
+
+    const cy = cyRef.current;
+
+    // record an anchor *only* (no animation here)
+    if (cy) {
+      const el = cy.getElementById(id);
+      if (el.nonempty()) {
+        // capture "back target" in the PARENT graph coordinates
+        const anchorPan = cy.pan();
+        const anchorZoom = cy.zoom();
+        const anchorPos = meta?.fromRenderPos ?? el.renderedPosition();
+
+        // Phase A: pre-zoom into the super-node (smooth + deterministic)
+        cy.stop();
+
+        // Fade the super-node a bit during the pre-zoom (cheap illusion; true fade comes later)
+        try {
+          el.animate({ style: { opacity: 0.25 } }, { duration: 240, easing: "ease-in-out-cubic" });
+        } catch {}
+
+        const nextZoom = Math.min(Math.max(anchorZoom * 1.35, 0.6), 3.0);
+        const a = cy.animation(
+          { center: { eles: el }, zoom: nextZoom },
+          { duration: 420, easing: "ease-in-out-cubic" }
+        );
+        a.play();
+        await a.promise("completed");
+
+        pushFocus({ id, fromNodeId: id, anchorPos, anchorPan, anchorZoom });
+        return;
+      }
+    }
+
+    pushFocus({ id, fromNodeId: id });
   }
+
+  function pushFocus(entry: FocusEntry) {
+    setSelected(null);
+    setFocusStack((s) => (s.at(-1)?.id === entry.id ? s : [...s, entry]));
+  }
+
 
   function popFocus() {
     setSelected(null);
+
+    const prevEntry = focusTop; // the focus we are leaving (contains parent camera snapshot)
+    const goingBackTo = focusStack.length >= 2 ? focusStack[focusStack.length - 2] : null;
+
+    if (prevEntry?.anchorPan && typeof prevEntry.anchorZoom === "number") {
+      setPendingCamera({
+        pan: prevEntry.anchorPan,
+        zoom: prevEntry.anchorZoom,
+        centerNodeId: prevEntry.fromNodeId ?? goingBackTo?.id ?? undefined,
+      });
+    } else {
+      setPendingCamera(null);
+    }
+    
     setFocusStack((s) => s.slice(0, -1));
   }
 
@@ -127,8 +197,6 @@ export default function Page() {
       showRecommended,
       showRelated,
     });
-
-    cy.fit(undefined, 30);
   }, [showRequires, showRecommended, showRelated]);
 
   return (
@@ -140,9 +208,7 @@ export default function Page() {
             <BoundaryPanel
               graph={graph}
               onJump={(groupId) => {
-                pushFocus(groupId);
-                load(groupId);
-                setSelected(null);
+                pushFocus({id: groupId});
               }}
             />
           )
@@ -151,38 +217,30 @@ export default function Page() {
         {graph ? (
           <GraphView
             graph={graph}
+            focusMeta={focusTop}
+            pendingCamera={pendingCamera}
+            onPendingCameraApplied={() => setPendingCamera(null)}
             onSelect={(n) => {
               setSelected(n);
 
-              if (!n) {
-                setCreating(false);
-                return;
-              }
+              if (!n) return;
 
               const cy = cyRef.current;
-              if (cy) {
-                const el = cy.getElementById(n.id);
-                if (!el.empty()) {
-                  const targetZoom = Math.max(cy.zoom(), VIEW_ANIM.center.minZoom);
-                  cy.animate(
-                    { center: { eles: el }, zoom: targetZoom },
-                    { duration: 400, easing: VIEW_ANIM.easing }
-                  );
-                }
+
+              if (!cy) return;
+
+              const el = cy.getElementById(n.id);
+
+              if (!el.empty()) {
+                const targetZoom = Math.max(cy.zoom(), VIEW_ANIM.center.minZoom);
+                cy.animate(
+                  { center: { eles: el }, zoom: targetZoom },
+                  { duration: 400, easing: VIEW_ANIM.easing }
+                );
               }
             }}
-            onEnterFocus={ async (id) => {
-              pushFocus(id);
-              await load(id);
-              setSelected(null);
-
-              // 4) detail: fit after graph switches
-              requestAnimationFrame(() => {
-                const cy = cyRef.current;
-                if (!cy) return;
-                const visible = cy.elements(":visible");
-                if (visible.nonempty()) cy.fit(visible, 30);
-              });
+            onEnterFocus={async (id, meta) => {
+              await drillEnterFocus(id, meta);
             }}
             onCyReady={(cy) => {
               cyRef.current = cy;

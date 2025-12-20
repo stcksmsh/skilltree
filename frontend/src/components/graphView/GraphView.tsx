@@ -5,17 +5,28 @@ import cytoscape, { Core } from "cytoscape";
 import dagre from "cytoscape-dagre";
 
 import type { GraphOut, AbstractNodeOut } from "./types";
-import { CY_STYLE, runRelayout } from "./cy/style";
+import { CY_STYLE, runRelayout, runRelayoutAsync } from "./cy/style";
 import { makeRestoreAll } from "./cy/anim";
 import { highlightRequiresChain } from "./cy/highlight";
-import { installGraphEvents } from "./cy/events";
+import { EnterFocusMeta, installGraphEvents } from "./cy/events";
 
 cytoscape.use(dagre);
 
 type BundleKey = `${string}::${string}::${string}`;
 
+export type FocusMeta = {
+  id?: string;
+  fromNodeId?: string;
+  anchorPos?: { x: number; y: number };
+  anchorPan?: { x: number; y: number };
+  anchorZoom?: number;
+};
+
 export function GraphView({
   graph,
+  focusMeta,
+  pendingCamera,
+  onPendingCameraApplied,
   onSelect,
   onEnterFocus,
   onCyReady,
@@ -23,8 +34,17 @@ export function GraphView({
   highlightPrereqs,
 }: {
   graph: GraphOut;
+  focusMeta?: {
+    id: string;
+    fromNodeId?: string;
+    anchorPos?: { x: number; y: number };
+    anchorPan?: { x: number; y: number };
+    anchorZoom?: number;
+  } | null;
+  pendingCamera?: { pan: { x: number; y: number }; zoom: number; centerNodeId?: string } | null;
+  onPendingCameraApplied?: () => void;
   onSelect: (n: AbstractNodeOut | null) => void;
-  onEnterFocus?: (id: string) => void;
+  onEnterFocus?: (id: string, meta?: EnterFocusMeta) => void;
   onCyReady?: (cy: Core) => void;
   selectedId?: string | null;
   highlightPrereqs?: boolean;
@@ -32,32 +52,41 @@ export function GraphView({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
 
+  const focusMetaRef = useRef(focusMeta);
+  useEffect(() => { focusMetaRef.current = focusMeta; }, [focusMeta]);
+
+  const pendingCameraRef = useRef(pendingCamera);
+  useEffect(() => { pendingCameraRef.current = pendingCamera; }, [pendingCamera]);
+
+  const onPendingCameraAppliedRef = useRef(onPendingCameraApplied);
+  useEffect(() => { onPendingCameraAppliedRef.current = onPendingCameraApplied; }, [onPendingCameraApplied]);
+
   const restoreAllRef = useRef<(() => void) | null>(null);
   const highlightRef = useRef<((id: string) => void) | null>(null);
 
   const onEnterFocusRef = useRef(onEnterFocus);
-  
+
   // keep callbacks stable without re-creating cytoscape
   const onSelectRef = useRef(onSelect);
   const onCyReadyRef = useRef(onCyReady);
   const highlightEnabledRef = useRef<boolean>(!!highlightPrereqs);
-  
+
   useEffect(() => {
     onSelectRef.current = onSelect;
   }, [onSelect]);
-  
+
   useEffect(() => {
     onCyReadyRef.current = onCyReady;
   }, [onCyReady]);
-  
+
   useEffect(() => {
     highlightEnabledRef.current = !!highlightPrereqs;
   }, [highlightPrereqs]);
-  
+
   useEffect(() => {
     onEnterFocusRef.current = onEnterFocus;
   }, [onEnterFocus]);
-  
+
   const elements = useMemo(() => {
     // --- impl_id -> abstract_id mapping
     const implToAbs = new Map<string, string>();
@@ -79,7 +108,6 @@ export function GraphView({
         has_variants: n.has_variants,
         default_impl_id: n.default_impl_id ?? "",
       },
-      // classes for styling (optional, but useful now)
       classes: [
         n.kind === "group" ? "kind-group" : "kind-concept",
         n.has_children ? "has-children" : "",
@@ -90,15 +118,12 @@ export function GraphView({
     }));
 
     // --- project + bundle impl edges into abstract edges
-    // Bundle by srcAbs, dstAbs, type (keeps DAG view readable)
     const bundles = new Map<BundleKey, { count: number; rankMin: number | null }>();
 
     for (const e of graph.edges) {
       const srcAbs = implToAbs.get(e.src_impl_id);
       const dstAbs = implToAbs.get(e.dst_impl_id);
       if (!srcAbs || !dstAbs) continue;
-
-      // optional: drop self after projection (variant-to-variant within same abstract)
       if (srcAbs === dstAbs) continue;
 
       const key: BundleKey = `${srcAbs}::${dstAbs}::${e.type}`;
@@ -109,7 +134,6 @@ export function GraphView({
         bundles.set(key, { count: 1, rankMin: rank });
       } else {
         prev.count += 1;
-        // keep min rank for recommended (stable-ish)
         if (rank != null) prev.rankMin = prev.rankMin == null ? rank : Math.min(prev.rankMin, rank);
       }
     }
@@ -123,7 +147,6 @@ export function GraphView({
           source,
           target,
           type,
-          // optional: show count to debug
           count: v.count,
           rank: v.rankMin ?? "",
         },
@@ -148,40 +171,112 @@ export function GraphView({
   useEffect(() => {
     if (!containerRef.current) return;
 
-    if (cyRef.current) {
-      cyRef.current.destroy();
-      cyRef.current = null;
-    }
-
     const cy = cytoscape({
       container: containerRef.current,
-      elements,
+      elements: [],
       style: CY_STYLE,
       layout: { name: "preset" },
     });
-
-    runRelayout(cy);
 
     cyRef.current = cy;
     onCyReadyRef.current?.(cy);
 
     const restoreAll = makeRestoreAll(cy);
     restoreAllRef.current = restoreAll;
+    highlightRef.current = (id: string) => highlightRequiresChain(cy, id);
 
-    const highlight = (id: string) => highlightRequiresChain(cy, id);
-    highlightRef.current = highlight;
+
+    // also do a one-shot on next frame (initial mount sizing)
+    requestAnimationFrame(() => {
+      cy.resize();
+    });
 
     installGraphEvents({
       cy,
       onSelect: (n) => onSelectRef.current(n),
-      onEnterFocus: (id) => onEnterFocusRef.current?.(id),
+      onEnterFocus: (id, meta) => onEnterFocusRef.current?.(id, meta),
       restoreAll,
-      highlightSelected: highlight,
+      highlightSelected: highlightRef.current,
       shouldHighlight: () => !!highlightEnabledRef.current,
     });
 
     return () => cy.destroy();
+  }, []);
+
+  function runRelayoutNoFit(cy: Core) {
+    // Important: no fit, no camera meddling. Layout just positions nodes.
+    const layout = cy.layout({
+      name: "dagre",
+      rankDir: "LR",
+      nodeSep: 22,
+      edgeSep: 10,
+      rankSep: 70,
+      fit: false,
+      animate: false,
+      spacingFactor: 1.15,
+    } as any);
+
+    layout.run();
+  }
+
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+
+    // 1. Stop everything
+    cy.stop();
+
+    // 2. Swap elements
+    cy.batch(() => {
+      cy.elements().remove();
+      cy.add(elements);
+    });
+
+    // 3. Layout (instant)
+    runRelayout(cy);
+
+    // 4. Camera resolution (exactly one path)
+
+    // A) BACK / POP takes priority
+    if (pendingCameraRef.current) {
+      const { pan, zoom, centerNodeId } = pendingCameraRef.current;
+      const el = centerNodeId ? cy.getElementById(centerNodeId) : null;
+
+      cy.animate(
+        el && el.nonempty()
+          ? { center: { eles: el }, pan, zoom }
+          : { pan, zoom },
+        {
+          duration: 520,
+          easing: "ease-in-out-cubic",
+          complete: () => {
+            onPendingCameraAppliedRef.current?.();
+          },
+        }
+      );
+
+      return;
+    }
+
+    // B) ENTER / DRILL: after layout, fit to the new graph contents
+    const meta = focusMetaRef.current
+    if (meta?.id) {
+      const vis = cy.elements(":visible");
+      if (vis.nonempty()) {
+        cy.animate(
+          { fit: { eles: vis, padding: 60 } },
+          { duration: 520, easing: "ease-in-out-cubic" }
+        );
+        return
+      }
+    }
+
+
+    // C) Fallback
+    cy.fit(cy.elements(":visible"), 30);
+
   }, [elements]);
+
 
   // external toggle / selection changes
   useEffect(() => {
@@ -202,4 +297,28 @@ export function GraphView({
   }, [highlightPrereqs, selectedId]);
 
   return <div ref={containerRef} style={{ height: "100%", width: "100%" }} />;
+}
+
+
+function clamp(v: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, v));
+}
+
+function computePanFromAnchor(opts: {
+  cy: cytoscape.Core;
+  anchorPos: { x: number; y: number };
+  anchorPan: { x: number; y: number };
+}) {
+  const { cy, anchorPos, anchorPan } = opts;
+
+  const w = cy.width();
+  const h = cy.height();
+
+  const dx = w / 2 - anchorPos.x;
+  const dy = h / 2 - anchorPos.y;
+
+  return {
+    x: anchorPan.x + dx,
+    y: anchorPan.y + dy,
+  };
 }

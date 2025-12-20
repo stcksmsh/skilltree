@@ -125,26 +125,13 @@ export function animateFitVisible(cy: cytoscape.Core) {
 export function runRelayout(cy: cytoscape.Core) {
   const layout = cy.layout({
     name: "dagre",
-
-    // if requires arrows are prereq -> dependent, and you want basics at bottom:
-    // BT puts sources lower and arrows generally flow upward.
-    rankDir: "BT",
-
-    // spacing knobs (these are the important ones)
-    rankSep: 130, // distance between levels
-    nodeSep: 70,  // distance between nodes in same level
-    edgeSep: 20,  // distance between parallel edges
-
-    // nicer long-edge routing
-    ranker: "network-simplex",
-
-    // animate
-    animate: true,
-    animationDuration: VIEW_ANIM.layout.duration,
-    animationEasing: VIEW_ANIM.easing,
-
-    // padding
-    padding: VIEW_ANIM.layout.padding,
+    rankDir: "LR",
+    nodeSep: 22,
+    edgeSep: 10,
+    rankSep: 70,
+    fit: false,
+    animate: false,
+    spacingFactor: 1.15,
   } as any);
 
   layout.run();
@@ -157,6 +144,23 @@ export function runRelayout(cy: cytoscape.Core) {
       maxBend: 240,
       bendStep: 20,
     });
-    animateFitVisible(cy);
+  });
+}
+
+export function runRelayoutAsync(cy: cytoscape.Core): Promise<void> {
+  return new Promise((resolve) => {
+    const layout = cy.layout({
+      name: "dagre",
+      rankDir: "LR",
+      nodeSep: 22,
+      edgeSep: 10,
+      rankSep: 70,
+      fit: false,
+      animate: false,
+      spacingFactor: 1.15,
+    } as any);
+
+    layout.one("layoutstop", () => resolve());
+    layout.run();
   });
 }

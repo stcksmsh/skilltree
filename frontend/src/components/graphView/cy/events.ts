@@ -1,10 +1,15 @@
 import type cytoscape from "cytoscape";
 import type { AbstractNodeOut } from "@/components/graphView/types";
 
+export type EnterFocusMeta = {
+  fromNodeId?: string;
+  fromRenderPos?: { x: number; y: number };
+};
+
 export function installGraphEvents(opts: {
   cy: cytoscape.Core;
   onSelect: (n: AbstractNodeOut | null) => void;
-  onEnterFocus: (abstractId: string) => void;
+  onEnterFocus: (abstractId: string, meta?: EnterFocusMeta) => void;
   restoreAll: () => void;
   highlightSelected: (id: string) => void;
   shouldHighlight: () => boolean;
@@ -29,33 +34,59 @@ export function installGraphEvents(opts: {
     };
   };
 
-  // single click selects (no focus change)
+  // ---- IMPORTANT: debounce tap so dbltap can cancel it
+  let tapTimer: number | null = null;
+  const TAP_DELAY_MS = 200;
+
+  const clearTapTimer = () => {
+    if (tapTimer != null) {
+      window.clearTimeout(tapTimer);
+      tapTimer = null;
+    }
+  };
+
   cy.on("tap", "node", (evt) => {
-    cy.$("node").unselect();
-    evt.target.select();
+    clearTapTimer();
 
-    const node = readNodeOut(evt);
-    onSelect(node);
+    // schedule "single tap" selection
+    tapTimer = window.setTimeout(() => {
+      tapTimer = null;
 
-    if (shouldHighlight()) {
-      restoreAll();
-      highlightSelected(node.id);
-    }
+      cy.$("node").unselect();
+      evt.target.select();
+
+      const node = readNodeOut(evt);
+      onSelect(node);
+
+      if (shouldHighlight()) {
+        restoreAll();
+        highlightSelected(node.id);
+      }
+    }, TAP_DELAY_MS);
   });
 
-  // double click enters focus (only if expandable)
   cy.on("dbltap", "node", (evt) => {
-    const node = readNodeOut(evt);
+    clearTapTimer();
 
-    // only enter on groups (or anything you consider expandable)
+    const node = readNodeOut(evt);
     if (node.kind === "group" && node.has_children) {
-      onEnterFocus(node.id);
+      // optional: clear selection UI immediately for drill
+      cy.$("node").unselect();
+      onSelect(null);
+      restoreAll();
+
+      evt.target.addClass("exiting-focus");
+      onEnterFocus(node.id, {
+        fromNodeId: node.id,
+        fromRenderPos: evt.target.renderedPosition()
+      });
     }
   });
 
-  // background click clears selection
   cy.on("tap", (evt) => {
     if (evt.target !== cy) return;
+
+    clearTapTimer();
 
     cy.$("node").unselect();
     onSelect(null);
