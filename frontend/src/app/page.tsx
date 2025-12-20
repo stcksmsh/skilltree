@@ -19,9 +19,10 @@ export default function Page() {
   const [graph, setGraph] = useState<GraphOut | null>(null);
   const [selected, setSelected] = useState<AbstractNodeOut | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const [focusStack, setFocusStack] = useState<string[]>([]);
-  const [focusId, setFocusId] = useState<string | null>(null);
+  
+  type FocusEntry = { id: string };
+  const [focusStack, setFocusStack] = useState<FocusEntry[]>([]);
+  const focusId = focusStack.length ? focusStack[focusStack.length - 1].id : null;
 
   const cyRef = useRef<Core | null>(null);
 
@@ -35,7 +36,7 @@ export default function Page() {
   const [newTitle, setNewTitle] = useState("");
   const [newSummary, setNewSummary] = useState("");
 
-  async function load(id: string | null = focusId) {
+  async function load(id: string | null) {
     setError(null);
     try {
       if (id) {
@@ -46,17 +47,6 @@ export default function Page() {
     } catch (e: any) {
       setError(e?.message ?? String(e));
     }
-  }
-
-  async function popFocus() {
-    setError(null);
-    setFocusStack((stack) => {
-      const next = stack.slice(0, -1);
-      const newFocus = next.length ? next[next.length - 1] : null;
-      setFocusId(newFocus);
-      load(newFocus);
-      return next;
-    });
   }
 
   async function createNode() {
@@ -80,9 +70,17 @@ export default function Page() {
     }
   }
 
-  useEffect(() => {
-    load(null);
-  }, []);
+  function pushFocus(id: string) {
+    setSelected(null);
+    setFocusStack((s) => (s.at(-1)?.id === id ? s : [...s, { id }]));
+  }
+
+  function popFocus() {
+    setSelected(null);
+    setFocusStack((s) => s.slice(0, -1));
+  }
+
+  useEffect(() => { if (focusId) load(focusId); else load(null); }, [focusId]);
 
   // toggle edges visibility
   useEffect(() => {
@@ -111,8 +109,7 @@ export default function Page() {
             <BoundaryPanel
               graph={graph}
               onJump={(groupId) => {
-                setFocusStack((s) => [...s, groupId]);
-                setFocusId(groupId);
+                pushFocus(groupId);
                 load(groupId);
                 setSelected(null);
               }}
@@ -146,16 +143,14 @@ export default function Page() {
               // ENTER FOCUS if expandable
               if (n.has_children) {
                 setTimeout(async () => {
-                  setFocusStack((s) => [...s, n.id]);
-                  setFocusId(n.id);
+                  pushFocus(n.id);
                   await load(n.id);
                   setSelected(null);
                 }, 420); // let animation finish
               }
             }}
             onEnterFocus={ async (id) => {
-              setFocusStack((s) => [...s, id]);
-              setFocusId(id);
+              pushFocus(id);
               await load(id);
               setSelected(null);
 
