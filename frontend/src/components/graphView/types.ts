@@ -42,6 +42,7 @@ export type BoundaryHintOut = {
   short_title: string;
   type: "requires" | "recommended";
   count: number;
+  direction: "depends_on" | "used_by";
 };
 
 export type GraphOut = {

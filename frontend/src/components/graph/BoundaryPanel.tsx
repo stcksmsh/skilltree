@@ -63,6 +63,28 @@ const sectionTitleStyle: React.CSSProperties = {
   margin: 0,
 };
 
+const dividerStyle: React.CSSProperties = {
+  marginTop: 12,
+  marginBottom: 8,
+  border: "none",
+  borderTop: "1px solid rgba(255,255,255,0.08)",
+};
+
+const blockTitleStyle: React.CSSProperties = {
+  margin: 0,
+  marginTop: 2,
+  fontSize: 12,
+  fontWeight: 700,
+  opacity: 0.92,
+};
+
+const blockSubtitleStyle: React.CSSProperties = {
+  margin: 0,
+  marginTop: 2,
+  fontSize: 11,
+  opacity: 0.55,
+};
+
 const badgeStyle = (kind: "requires" | "recommended"): React.CSSProperties => ({
   fontSize: 10,
   padding: "2px 8px",
@@ -129,27 +151,36 @@ const countStyle: React.CSSProperties = {
   border: "1px solid rgba(255,255,255,0.08)",
 };
 
+type Hint = NonNullable<GraphOut["boundary_hints"]>[number];
+
+function groupByType(items: Hint[]) {
+  const req = items.filter((h) => h.type === "requires").sort((a, b) => b.count - a.count);
+  const rec = items.filter((h) => h.type === "recommended").sort((a, b) => b.count - a.count);
+  return { req, rec };
+}
+
 export function BoundaryPanel({ graph, onJump }: Props) {
   const hints = graph.boundary_hints ?? [];
-  const has = hints.length > 0;
-  if (!has) return null;
+  if (!hints.length) return null;
 
   const grouped = useMemo(() => {
-    const req = hints
-      .filter((h) => h.type === "requires")
-      .sort((a, b) => b.count - a.count);
-    const rec = hints
-      .filter((h) => h.type === "recommended")
-      .sort((a, b) => b.count - a.count);
-    return { req, rec };
+    const dependsOn = hints.filter((h) => h.direction === "depends_on");
+    const usedBy = hints.filter((h) => h.direction === "used_by");
+    return {
+      dependsOn: groupByType(dependsOn),
+      usedBy: groupByType(usedBy),
+      totalDependsOn: dependsOn.length,
+      totalUsedBy: usedBy.length,
+    };
   }, [hints]);
 
   const renderSection = (
     label: string,
     kind: "requires" | "recommended",
-    items: typeof hints
+    items: Hint[]
   ) => {
     if (!items.length) return null;
+
     return (
       <div style={sectionStyle}>
         <div style={sectionHeaderStyle}>
@@ -159,7 +190,7 @@ export function BoundaryPanel({ graph, onJump }: Props) {
 
         {items.map((h) => (
           <div
-            key={`${h.group_id}-${h.type}`}
+            key={`${h.group_id}-${h.type}-${h.direction}`}
             style={itemStyle(kind)}
             onClick={() => onJump(h.group_id)}
             onMouseEnter={(e) => {
@@ -185,15 +216,46 @@ export function BoundaryPanel({ graph, onJump }: Props) {
     );
   };
 
+  const renderBlock = (
+    title: string,
+    subtitle: string,
+    block: { req: Hint[]; rec: Hint[] },
+    totalCount: number
+  ) => {
+    if (totalCount === 0) return null;
+
+    return (
+      <div>
+        <p style={blockTitleStyle}>{title}</p>
+        <p style={blockSubtitleStyle}>{subtitle}</p>
+        {renderSection("Requires", "requires", block.req)}
+        {renderSection("Recommended", "recommended", block.rec)}
+      </div>
+    );
+  };
+
   return (
     <div style={panelStyle}>
       <div style={titleRowStyle}>
-        <p style={titleStyle}>Connected out</p>
+        <p style={titleStyle}>Boundary</p>
         <p style={subtitleStyle}>outside current focus</p>
       </div>
 
-      {renderSection("Requires", "requires", grouped.req)}
-      {renderSection("Recommended", "recommended", grouped.rec)}
+      {renderBlock(
+        "Depends on",
+        "external prerequisites for this focus",
+        grouped.dependsOn,
+        grouped.totalDependsOn
+      )}
+
+      {(grouped.totalDependsOn > 0 && grouped.totalUsedBy > 0) && <hr style={dividerStyle} />}
+
+      {renderBlock(
+        "Used by",
+        "external areas that depend on this focus",
+        grouped.usedBy,
+        grouped.totalUsedBy
+      )}
     </div>
   );
 }
