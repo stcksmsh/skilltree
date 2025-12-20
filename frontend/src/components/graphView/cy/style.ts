@@ -150,10 +150,6 @@ export function runRelayout(cy: cytoscape.Core) {
   layout.run();
 
   layout.one("layoutstop", () => {
-    animateFitVisible(cy);
-  });
-
-  layout.one("layoutstop", () => {
     routeCurvedEdgesAvoidingNodes(cy, {
       onlySelector: "edge.requires:visible",
       nodePadding: 14,
