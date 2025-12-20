@@ -18,28 +18,23 @@ log = logging.getLogger("graph.focus")
 
 async def build_focus_graph(*, session: AsyncSession, focus_abstract_id: UUID) -> GraphOut:
     """
-    Focus graph (children-only):
-    - Visible abstracts = direct children of focus (NOT the focus node itself)
-    - Active impls:
-        - impl has NO ImplContext rows  => global => active everywhere
-        - impl has ImplContext rows     => active iff focus_abstract_id is in them
-      Active impls are used for INTERNAL edges + impl_nodes.
-    - Boundary hints consider edges touching ANY impl that belongs to inside abstracts,
-      INCLUDING inactive variants.
-    - No "outgoing external concept expansion" in this mode (keep "inside" pure).
+    Focus graph:
+    - focus_abstract_id must be a HUB (level-2 group)
+    - visible abstracts = ALL descendants of that hub
+    - focus node itself is NOT included
+
+    Boundary hints are DIRECTIONAL relative to inside set:
+      - depends_on: inside -> outside (external prerequisites)
+      - used_by:   outside -> inside (external dependents)
     """
 
-    # 1) focus existence (used for boundary grouping / ancestor chain)
     focus = await session.get(AbstractNode, focus_abstract_id)
     if not focus:
         raise HTTPException(status_code=404, detail="Abstract node not found")
 
-    # 2) inside abstracts = children only
     inside_abs = await _load_descendants(session=session, root_id=focus_abstract_id)
     inside_abs_ids = {n.id for n in inside_abs}
 
-
-    # If empty group, return empty interior (still can show boundary hints = none)
     if not inside_abs_ids:
         return GraphOut(
             abstract_nodes=[],
@@ -49,61 +44,83 @@ async def build_focus_graph(*, session: AsyncSession, focus_abstract_id: UUID) -
             boundary_hints=[],
         )
 
-    # 3) build state for inside-only
     state = await _build_state(session=session, focus=focus, inside_abs_ids=inside_abs_ids)
 
-    # 4) ancestor set for boundary grouping (focus chain)
     focus_ancestor_ids = _build_ancestor_set(focus, state.abs_by_id)
 
     def find_boundary_group(outside_abs: AbstractNode) -> AbstractNode:
         """
-        "Topmost outside node before entering focus ancestor chain":
-        Walk up outside_abs -> parent -> ... until next parent would be in focus_ancestor_ids, or root.
+        Walk up outside_abs until we'd enter the focus ancestor chain (or root).
+        Returns the "boundary group" node to attach the chip to.
         """
         cur = outside_abs
         while True:
             pid = cur.parent_id
-            if pid is None:
-                return cur
-            if pid in focus_ancestor_ids:
+            if pid is None or pid in focus_ancestor_ids:
                 return cur
             nxt = state.abs_by_id.get(pid)
             if nxt is None:
                 return cur
             cur = nxt
 
-    # 5) internal edges (ACTIVE-only)
-    internal_edges: list[Edge] = []
-    for e in state.touching_edges_any_inside_impl:
-        if e.src_impl_id in state.inside_impl_ids_active and e.dst_impl_id in state.inside_impl_ids_active:
-            internal_edges.append(e)
+    # INTERNAL edges: only ACTIVE impls, both endpoints inside
+    internal_edges = [
+        e for e in state.touching_edges_any_inside_impl
+        if e.src_impl_id in state.inside_impl_ids_active
+        and e.dst_impl_id in state.inside_impl_ids_active
+    ]
 
-    # 6) boundary hints (ANY inside-impl, including inactive variants)
-    boundary_map: dict[tuple[UUID, EdgeType], int] = {}
+    # BOUNDARY hints: edges touching ANY inside impl (including inactive variants),
+    # but we expose direction to avoid incorrect "requires" narratives.
+    boundary_map: dict[tuple[UUID, EdgeType, str], int] = {}
 
     for e in state.touching_edges_any_inside_impl:
-        src_impl = state.impl_by_id.get(e.src_impl_id)
-        dst_impl = state.impl_by_id.get(e.dst_impl_id)
-        if not src_impl or not dst_impl:
+        src = state.impl_by_id.get(e.src_impl_id)
+        dst = state.impl_by_id.get(e.dst_impl_id)
+        if not src or not dst:
             continue
 
-        src_abs_id = src_impl.abstract_id
-        dst_abs_id = dst_impl.abstract_id
+        src_in = src.abstract_id in inside_abs_ids
+        dst_in = dst.abstract_id in inside_abs_ids
 
-        src_abs_in = src_abs_id in inside_abs_ids
-        dst_abs_in = dst_abs_id in inside_abs_ids
-
-        if not (src_abs_in ^ dst_abs_in):
+        # boundary edge = exactly one endpoint abstract is inside
+        if not (src_in ^ dst_in):
             continue
 
-        outside_abs_id = dst_abs_id if src_abs_in else src_abs_id
+        # direction relative to inside:
+        # - inside -> outside => inside depends_on outside
+        # - outside -> inside => outside used_by inside
+        if src_in and not dst_in:
+            direction = "depends_on"
+            outside_abs_id = dst.abstract_id
+        else:
+            direction = "used_by"
+            outside_abs_id = src.abstract_id
+
         outside_abs = state.abs_by_id.get(outside_abs_id)
         if not outside_abs:
             continue
 
-        boundary_group = find_boundary_group(outside_abs)
-        key = (boundary_group.id, e.type)
+        g = find_boundary_group(outside_abs)
+        key = (g.id, e.type, direction)
         boundary_map[key] = boundary_map.get(key, 0) + 1
+
+    # deterministic ordering: depends_on first, requires before recommended, then count desc
+    def _dir_order(d: str) -> int:
+        return 0 if d == "depends_on" else 1
+
+    def _type_order(t: EdgeType) -> int:
+        return 0 if t == EdgeType.requires else 1
+
+    boundary_items = sorted(
+        boundary_map.items(),
+        key=lambda kv: (
+            _dir_order(kv[0][2]),
+            _type_order(kv[0][1]),
+            -kv[1],
+            state.abs_by_id[kv[0][0]].title,
+        ),
+    )
 
     boundary_hints = [
         BoundaryHintOut(
@@ -112,11 +129,12 @@ async def build_focus_graph(*, session: AsyncSession, focus_abstract_id: UUID) -
             short_title=state.abs_by_id[gid].short_title,
             type=edge_type.value,
             count=count,
+            direction=direction,
         )
-        for (gid, edge_type), count in boundary_map.items()
+        for (gid, edge_type, direction), count in boundary_items
     ]
 
-    # 7) compute has_children for returned inside abstracts (so nested groups are drillable)
+    # has_children within inside set (so nested groups remain drillable)
     children_counts = dict(
         (
             await session.execute(
@@ -127,7 +145,8 @@ async def build_focus_graph(*, session: AsyncSession, focus_abstract_id: UUID) -
         ).all()
     )
 
-    # 8) pack output
+    # include ALL impl variants in abstract.impls (variant picker),
+    # but impl_nodes = ACTIVE impls only
     abs_id_to_impls_all: dict[UUID, list[ImplNode]] = {}
     for i in state.inside_impls_all:
         abs_id_to_impls_all.setdefault(i.abstract_id, []).append(i)
@@ -141,7 +160,6 @@ async def build_focus_graph(*, session: AsyncSession, focus_abstract_id: UUID) -
     abstract_nodes_out: list[AbstractNodeOut] = []
     for n in inside_abs:
         impls = abs_id_to_impls_all.get(n.id, [])
-
         abstract_nodes_out.append(
             AbstractNodeOut(
                 id=n.id,
@@ -245,7 +263,9 @@ async def _build_state(*, session: AsyncSession, focus: AbstractNode, inside_abs
             )
         ).scalars().all()
 
-    edge_impl_ids = {e.src_impl_id for e in touching_edges_any_inside_impl} | {e.dst_impl_id for e in touching_edges_any_inside_impl}
+    edge_impl_ids = {e.src_impl_id for e in touching_edges_any_inside_impl} | {
+        e.dst_impl_id for e in touching_edges_any_inside_impl
+    }
 
     edge_impls: list[ImplNode] = []
     if edge_impl_ids:
@@ -306,6 +326,7 @@ async def _preload_ancestors(*, session: AsyncSession, abs_by_id: dict[UUID, Abs
             abs_by_id[p.id] = p
             if p.parent_id is not None and p.parent_id not in abs_by_id:
                 missing.add(p.parent_id)
+
 
 async def _load_descendants(*, session: AsyncSession, root_id: UUID) -> list[AbstractNode]:
     out: list[AbstractNode] = []

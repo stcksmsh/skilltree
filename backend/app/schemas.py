@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from uuid import UUID
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Literal
+
+
+class ImplOut(BaseModel):
+    id: UUID
+    abstract_id: UUID
+    variant_key: str
+    contract_md: Optional[str] = None
 
 
 class AbstractNodeOut(BaseModel):
@@ -22,11 +29,6 @@ class AbstractNodeOut(BaseModel):
     default_impl_id: Optional[UUID] = None
     impls: list[ImplOut] = []
 
-class ImplOut(BaseModel):
-    id: UUID
-    abstract_id: UUID
-    variant_key: str
-    contract_md: Optional[str] = None
 
 class EdgeOut(BaseModel):
     id: UUID
@@ -47,6 +49,9 @@ class BoundaryHintOut(BaseModel):
     short_title: str
     type: str
     count: int
+    # - depends_on: inside -> outside (external prerequisites)
+    # - used_by:   outside -> inside (external dependents)
+    direction: Literal["depends_on", "used_by"]
 
 
 class GraphOut(BaseModel):
