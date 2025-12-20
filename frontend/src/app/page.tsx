@@ -31,6 +31,41 @@ export default function Page() {
   const [showRelated, setShowRelated] = useState(true);
   const [highlightPrereqs, setHighlightPrereqs] = useState(false);
 
+  function applyEdgeVisibility(cy: Core, opts: {
+    showRequires: boolean;
+    showRecommended: boolean;
+    showRelated: boolean;
+  }) {
+    const setHidden = (selector: string, hidden: boolean) => {
+      const els = cy.elements(selector);
+      if (hidden) els.addClass("hidden");
+      else els.removeClass("hidden");
+    };
+
+    setHidden("edge.requires", !opts.showRequires);
+    setHidden("edge.recommended", !opts.showRecommended);
+    setHidden("edge.related", !opts.showRelated);
+  }
+  
+  // prevents overriding manual user toggles repeatedly
+  const autoDefaultsAppliedRef = useRef<"baseline" | "focus" | null>(null);
+
+  useEffect(() => {
+    const mode: "baseline" | "focus" = focusId ? "focus" : "baseline";
+    if (autoDefaultsAppliedRef.current === mode) return;
+
+    setShowRequires(true);
+    if (mode === "baseline") {
+      setShowRecommended(false);
+      setShowRelated(false);
+    } else {
+      setShowRecommended(true);
+      setShowRelated(true);
+    }
+
+    autoDefaultsAppliedRef.current = mode;
+  }, [focusId]);
+
   const [creating, setCreating] = useState(false);
   const [newSlug, setNewSlug] = useState("");
   const [newTitle, setNewTitle] = useState("");
@@ -87,15 +122,11 @@ export default function Page() {
     const cy = cyRef.current;
     if (!cy) return;
 
-    const setHidden = (selector: string, hidden: boolean) => {
-      const els = cy.elements(selector);
-      if (hidden) els.addClass("hidden");
-      else els.removeClass("hidden");
-    };
-
-    setHidden("edge.requires", !showRequires);
-    setHidden("edge.recommended", !showRecommended);
-    setHidden("edge.related", !showRelated);
+    applyEdgeVisibility(cy, {
+      showRequires,
+      showRecommended,
+      showRelated,
+    });
 
     cy.fit(undefined, 30);
   }, [showRequires, showRecommended, showRelated]);
@@ -155,6 +186,11 @@ export default function Page() {
             }}
             onCyReady={(cy) => {
               cyRef.current = cy;
+              applyEdgeVisibility(cy, {
+                showRequires,
+                showRecommended,
+                showRelated,
+              });
             }}
             selectedId={selected?.id ?? null}
             highlightPrereqs={highlightPrereqs}

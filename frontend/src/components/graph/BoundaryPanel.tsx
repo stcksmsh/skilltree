@@ -206,8 +206,8 @@ export function BoundaryPanel({ graph, onJump }: Props) {
             title={`Jump to ${h.title}`}
           >
             <div style={itemLeftStyle}>
-              <p style={itemTitleStyle}>{h.short_title}</p>
-              <p style={itemMetaStyle}>{h.title}</p>
+              <p style={itemTitleStyle}>{h.title}</p>
+              <p style={itemMetaStyle}>{h.short_title}</p>
             </div>
             <div style={countStyle}>{h.count}</div>
           </div>

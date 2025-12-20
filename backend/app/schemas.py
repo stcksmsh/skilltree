@@ -37,6 +37,10 @@ class EdgeOut(BaseModel):
     type: str
     rank: int | None = None
 
+    # NEW (baseline only)
+    via_abstract_id: UUID | None = None
+    via_abstract_short_title: str | None = None
+    via_domain_short_title: str | None = None
 
 class RelatedEdgeOut(BaseModel):
     a_id: UUID

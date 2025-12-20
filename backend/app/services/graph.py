@@ -3,33 +3,44 @@ from __future__ import annotations
 
 import uuid as _uuid
 from uuid import UUID
+
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..models import AbstractNode, ImplNode, Edge, RelatedEdge
+from ..models import AbstractNode, AbstractMembership, ImplNode, Edge, RelatedEdge
 from ..schemas import GraphOut, AbstractNodeOut, ImplOut, EdgeOut, RelatedEdgeOut
 
 
 async def build_graph(session: AsyncSession) -> GraphOut:
     """
-    Collapsed baseline graph (domain-top items):
+    Baseline graph (hub-level, membership-aware):
 
-    - Top-level domain groups (parent_id IS NULL AND kind=group) are NOT shown.
-    - Visible baseline nodes:
-        A) "Domain-top items": any abstract whose parent is a top-level domain group (depth=2),
-           regardless of kind (concept or group).
-        B) True root concepts: parent_id IS NULL AND kind=concept (optional, if you have any).
+    Definitions:
+    - "Top-level domains" = AbstractNode where parent_id IS NULL and kind == "group".
+      These are NOT shown in baseline.
+    - "Visible hubs" (baseline nodes) =
+        A) any AbstractNode whose parent_id is a top-level domain id (depth-2),
+           regardless of kind (group or concept)
+        B) any true root concept: parent_id IS NULL and kind == "concept" (optional)
 
-    - Representative of any abstract:
-        - If it is visible: itself
-        - Else: climb up until you find a visible ancestor (typically the depth-2 item under a domain).
-               If you hit a domain/root without finding one: None (drop it from baseline)
+    Membership:
+    - An abstract can belong to one or more hubs via AbstractMembership (abstract_id -> hub_id).
+      This supports "Fourier is in Methods but also appears in DSP/Physics hubs".
 
-    - impl_nodes includes exactly one representative impl per visible abstract
-      (virtual impl if none exists), so the UI can map impl->abstract.
-    - edges are rewritten to connect representative impls of representative abstracts.
-    - related_edges are omitted for baseline (can add later if you want).
+    Edge aggregation:
+    - We aggregate impl->impl edges up to hub->hub edges by expanding:
+        src_hubs = {home_hub(src_abstract)} ∪ memberships(src_abstract)
+        dst_hubs = {home_hub(dst_abstract)} ∪ memberships(dst_abstract)
+      and then counting/merging into a single EdgeOut per (src_hub, dst_hub, type).
+    - Recommended rank is min(rank) across merged edges.
+
+    Payload:
+    - abstract_nodes: visible hubs only
+    - impl_nodes: exactly ONE representative impl per visible hub (default impl if exists, else virtual)
+      so UI can map impl->abstract.
+    - edges: aggregated hub-level edges using representative impl ids.
+    - related_edges: omitted (empty) for baseline.
     """
 
     # ---------- load all abstracts + counts ----------
@@ -62,6 +73,9 @@ async def build_graph(session: AsyncSession) -> GraphOut:
     impls_all = (await session.execute(select(ImplNode))).scalars().all()
     edges_all = (await session.execute(select(Edge))).scalars().all()
 
+    # memberships (for baseline has_children + hub mapping)
+    memberships_all = (await session.execute(select(AbstractMembership))).scalars().all()
+
     abs_by_id: dict[UUID, AbstractNode] = {}
     child_count_by_id: dict[UUID, int] = {}
     impl_count_by_id: dict[UUID, int] = {}
@@ -71,7 +85,6 @@ async def build_graph(session: AsyncSession) -> GraphOut:
         child_count_by_id[a.id] = int(child_count or 0)
         impl_count_by_id[a.id] = int(impl_count or 0)
 
-    # ---------- kind helper ----------
     def kind_str(a: AbstractNode) -> str:
         k = getattr(a, "kind", None)
         if k is None:
@@ -85,13 +98,11 @@ async def build_graph(session: AsyncSession) -> GraphOut:
     }
 
     # ---------- visible baseline nodes ----------
-    # A) depth-2 under domain (parent is a top-level domain group)
     visible_depth2: set[UUID] = {
         a.id for a in abs_by_id.values()
         if a.parent_id is not None and a.parent_id in top_domain_ids
     }
 
-    # B) true root concepts (rare / optional)
     visible_root_concepts: set[UUID] = {
         a.id for a in abs_by_id.values()
         if a.parent_id is None and kind_str(a) == "concept"
@@ -99,10 +110,25 @@ async def build_graph(session: AsyncSession) -> GraphOut:
 
     visible_abs_ids: set[UUID] = visible_depth2 | visible_root_concepts
 
-    # ---------- collapse to visible representative ----------
+    # ---------- membership maps ----------
+    # abs -> hubs it belongs to
+    member_hubs_by_abs: dict[UUID, set[UUID]] = {}
+    # hub -> member count (for baseline has_children)
+    member_count_by_hub: dict[UUID, int] = {}
+
+    for m in memberships_all:
+        # only count memberships to visible hubs (expected)
+        if m.hub_id in visible_abs_ids:
+            member_hubs_by_abs.setdefault(m.abstract_id, set()).add(m.hub_id)
+            member_count_by_hub[m.hub_id] = member_count_by_hub.get(m.hub_id, 0) + 1
+
+    # ---------- taxonomy "home hub" representative ----------
     rep_cache: dict[UUID, UUID | None] = {}
 
-    def rep(abs_id: UUID) -> UUID | None:
+    def home_hub(abs_id: UUID) -> UUID | None:
+        """
+        Climb taxonomy until we hit a visible hub/root-concept. If none, return None.
+        """
         if abs_id in rep_cache:
             return rep_cache[abs_id]
 
@@ -112,7 +138,6 @@ async def build_graph(session: AsyncSession) -> GraphOut:
                 rep_cache[abs_id] = cur.id
                 return cur.id
 
-            # if we hit a domain/root and it's not visible, stop
             if cur.parent_id is None:
                 break
 
@@ -120,6 +145,23 @@ async def build_graph(session: AsyncSession) -> GraphOut:
 
         rep_cache[abs_id] = None
         return None
+
+    def hubs_for_abstract(abs_id: UUID) -> set[UUID]:
+        """
+        Hub set for an abstract = {home_hub} ∪ memberships(abs).
+        Filtered to visible hubs.
+        """
+        out: set[UUID] = set()
+
+        h = home_hub(abs_id)
+        if h is not None and h in visible_abs_ids:
+            out.add(h)
+
+        for mh in member_hubs_by_abs.get(abs_id, set()):
+            if mh in visible_abs_ids:
+                out.add(mh)
+
+        return out
 
     # ---------- impl grouping ----------
     impls_by_abs: dict[UUID, list[ImplNode]] = {}
@@ -133,7 +175,6 @@ async def build_graph(session: AsyncSession) -> GraphOut:
         return core.id if core else sorted(impls, key=lambda x: x.variant_key)[0].id
 
     # ---------- representative impls per visible abstract ----------
-    import uuid as _uuid
     _VIRTUAL_NS = _uuid.UUID("00000000-0000-0000-0000-000000000001")
 
     def virtual_impl_id(abs_id: UUID) -> UUID:
@@ -159,44 +200,82 @@ async def build_graph(session: AsyncSession) -> GraphOut:
                 )
             )
 
-    # ---------- rewrite edges to representative impl endpoints ----------
+    # ---------- aggregate edges to hub-level ----------
     impl_by_id: dict[UUID, ImplNode] = {i.id: i for i in impls_all}
 
-    rewritten_edges: list[EdgeOut] = []
+    # key: (srcHubAbsId, dstHubAbsId, type) -> rankMin (or None)
+    agg: dict[tuple[UUID, UUID, str], int | None] = {}
+
     for e in edges_all:
         src_impl = impl_by_id.get(e.src_impl_id)
         dst_impl = impl_by_id.get(e.dst_impl_id)
         if not src_impl or not dst_impl:
             continue
 
-        src_abs_rep = rep(src_impl.abstract_id)
-        dst_abs_rep = rep(dst_impl.abstract_id)
-
-        if src_abs_rep is None or dst_abs_rep is None:
-            continue
-        if src_abs_rep == dst_abs_rep:
+        src_hubs = hubs_for_abstract(src_impl.abstract_id)
+        dst_hubs = hubs_for_abstract(dst_impl.abstract_id)
+        if not src_hubs or not dst_hubs:
             continue
 
-        src_rep_impl = rep_impl_by_visible_abs.get(src_abs_rep)
-        dst_rep_impl = rep_impl_by_visible_abs.get(dst_abs_rep)
+        etype = e.type.value if hasattr(e.type, "value") else str(e.type)
+
+        for sh in src_hubs:
+            for dh in dst_hubs:
+                if sh == dh:
+                    continue
+
+                key = (sh, dh, etype)
+                if etype == "recommended":
+                    cur = agg.get(key)
+                    rank = e.rank
+                    if rank is None:
+                        # keep existing
+                        if cur is None:
+                            agg[key] = None
+                    else:
+                        if cur is None:
+                            agg[key] = rank
+                        else:
+                            agg[key] = rank if cur is None else min(cur, rank)
+                else:
+                    # requires: ignore rank
+                    if key not in agg:
+                        agg[key] = None
+
+    # deterministic EdgeOut ids per aggregated key
+    def edge_id_for(sh: UUID, dh: UUID, etype: str) -> UUID:
+        return _uuid.uuid5(_VIRTUAL_NS, f"baseline-edge:{etype}:{sh}:{dh}")
+
+    rewritten_edges: list[EdgeOut] = []
+    for (sh, dh, etype), rank_min in sorted(agg.items(), key=lambda x: (str(x[0][0]), str(x[0][1]), x[0][2])):
+        src_rep_impl = rep_impl_by_visible_abs.get(sh)
+        dst_rep_impl = rep_impl_by_visible_abs.get(dh)
         if src_rep_impl is None or dst_rep_impl is None:
             continue
 
         rewritten_edges.append(
             EdgeOut(
-                id=e.id,
+                id=edge_id_for(sh, dh, etype),
                 src_impl_id=src_rep_impl,
                 dst_impl_id=dst_rep_impl,
-                type=e.type.value if hasattr(e.type, "value") else str(e.type),
-                rank=e.rank,
+                type=etype,
+                rank=rank_min if etype == "recommended" else None,
             )
         )
 
     # ---------- pack visible abstract nodes ----------
     abs_out: list[AbstractNodeOut] = []
     for abs_id in sorted(visible_abs_ids, key=lambda x: str(x)):
-        a = abs_by_id[abs_id]
-        impl_list = impls_by_abs.get(a.id, [])
+        a = abs_by_id.get(abs_id)
+        if not a:
+            continue
+
+        impl_list = impls_by_abs.get(abs_id, [])
+
+        # has_children for baseline should include:
+        # - taxonomy children
+        # - OR membership members (so hubs drill even if taxonomy is thin)
+        has_kids = (child_count_by_id.get(abs_id, 0) > 0) or (member_count_by_hub.get(abs_id, 0) > 0)
 
         abs_out.append(
             AbstractNodeOut(
@@ -208,8 +287,8 @@ async def build_graph(session: AsyncSession) -> GraphOut:
                 body_md=a.body_md,
                 kind=kind_str(a),
                 parent_id=a.parent_id,
-                has_children=(child_count_by_id.get(a.id, 0) > 0),
-                has_variants=(impl_count_by_id.get(a.id, 0) > 1),
+                has_children=has_kids,
+                has_variants=(impl_count_by_id.get(abs_id, 0) > 1),
                 default_impl_id=pick_default_impl_id(impl_list),
                 impls=[
                     ImplOut(
@@ -223,6 +302,7 @@ async def build_graph(session: AsyncSession) -> GraphOut:
             )
         )
 
+    # ---------- impl_nodes: only representative impls for visible hubs ----------
     rep_impl_ids: set[UUID] = set(rep_impl_by_visible_abs.values())
 
     impl_nodes_out = [
@@ -241,6 +321,6 @@ async def build_graph(session: AsyncSession) -> GraphOut:
         abstract_nodes=abs_out,
         impl_nodes=impl_nodes_out,
         edges=rewritten_edges,
-        related_edges=[],
+        related_edges=[],  # baseline: omit for now
         boundary_hints=[],
     )
