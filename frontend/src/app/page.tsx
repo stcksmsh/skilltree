@@ -139,15 +139,6 @@ export default function Page() {
                   );
                 }
               }
-
-              // ENTER FOCUS if expandable
-              if (n.has_children) {
-                setTimeout(async () => {
-                  pushFocus(n.id);
-                  await load(n.id);
-                  setSelected(null);
-                }, 420); // let animation finish
-              }
             }}
             onEnterFocus={ async (id) => {
               pushFocus(id);
