@@ -1,0 +1,11 @@
+{
+  "slug": "skilltree",
+  "title": "Skilltree",
+  "tagline": "A full-stack graph/DAG explorer — FastAPI + Next.js, containerized with Docker Compose.",
+  "status": "active",
+  "stack": ["Python", "FastAPI", "TypeScript", "Next.js", "Docker"],
+  "repo": "https://github.com/stcksmsh/skilltree",
+  "accent": [0.75, 0.16, 145],
+  "featured": true,
+  "order": 3
+}
